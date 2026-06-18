@@ -49,13 +49,30 @@ export default function InterviewRoom() {
     return () => clearInterval(id);
   }, [phase]);
 
-  const speakThenListen = useCallback((text: string, stage: string, index: number) => {
+  const speakThenListen = useCallback(async (text: string, stage: string, index: number) => {
     setQuestion({ text, stage, index });
     setTurns((t) => [...t, { role: "interviewer", text }]);
     setAvatar("speaking");
-    // Simulated speaking duration until TTS streaming is wired (Phase 3b).
-    const ms = Math.min(7000, 1500 + text.length * 35);
-    setTimeout(() => setAvatar("listening"), ms);
+
+    try {
+      const resp = await fetch("/api/v1/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) throw new Error(`TTS ${resp.status}`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => { URL.revokeObjectURL(url); setAvatar("listening"); };
+      audio.onerror = () => { URL.revokeObjectURL(url); setAvatar("listening"); };
+      await audio.play();
+      return;
+    } catch {
+      // TTS unavailable — fall back to duration estimate so interview isn't blocked
+      const ms = Math.min(7000, 1500 + text.length * 35);
+      setTimeout(() => setAvatar("listening"), ms);
+    }
   }, []);
 
   const join = async () => {

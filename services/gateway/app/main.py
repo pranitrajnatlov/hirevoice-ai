@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from services.gateway.app.config import settings
 from services.gateway.app.db import init_db
-from services.gateway.app.api.v1 import analytics, auth, interviews, meeting, sessions
+from services.gateway.app.api.v1 import analytics, auth, interviews, meeting, sessions, tts
 from services.gateway.app.ws.manager import manager as ws_manager
 
 
@@ -50,6 +50,7 @@ app.include_router(interviews.router, prefix=API)
 app.include_router(meeting.router, prefix=API)
 app.include_router(sessions.router, prefix=API)
 app.include_router(analytics.router, prefix=API)
+app.include_router(tts.router, prefix=API)
 
 
 @app.websocket("/api/v1/ws/{interview_id}")

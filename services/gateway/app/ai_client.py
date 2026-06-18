@@ -41,6 +41,12 @@ class AIClient:
             r.raise_for_status()
             return r.json()
 
+    async def synthesize(self, text: str) -> bytes:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(f"{self.base_url}/ai/tts/synthesize", json={"text": text})
+            r.raise_for_status()
+            return r.content
+
 
 # Default instance; overridable in tests via dependency override.
 ai_client = AIClient()
