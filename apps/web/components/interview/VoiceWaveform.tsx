@@ -26,7 +26,7 @@ export function VoiceWaveform({
 
     let audioCtx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
-    let data: Uint8Array | null = null;
+    let data: Uint8Array<ArrayBuffer> | null = null;
 
     if (stream && active) {
       audioCtx = new AudioContext();
