@@ -12,7 +12,7 @@ export default function Landing() {
         </p>
         <div className="mt-8 flex justify-center gap-3">
           <Link href="/login"><Button size="lg">Recruiter sign in</Button></Link>
-          <Link href="/dashboard"><Button size="lg" variant="secondary">View dashboard</Button></Link>
+          <Link href="/register"><Button size="lg" variant="secondary">Create account</Button></Link>
         </div>
         <p className="mt-6 text-xs text-ink-muted">
           Candidates join via their emailed link: <code className="text-secondary">/interview/&lt;token&gt;</code>

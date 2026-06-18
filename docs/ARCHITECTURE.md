@@ -604,3 +604,8 @@ Motion      Framer Motion — page fade/slide, hover lift, score count-up, avata
 5. **Hardening** — CI/CD, k8s, observability, scaling, security review.
 
 See `infra/docker-compose.yml`, `db/schema.sql`, and `services/ai/` for the scaffolded foundation.
+
+# 1. AI service        uvicorn services.ai.app.main:app --port 8800
+# 2. Gateway           uvicorn services.gateway.app.main:app --port 8000
+# 3. Web               cd apps/web && npm run dev      # :3000
+# or: docker compose -f infra/docker-compose.yml up

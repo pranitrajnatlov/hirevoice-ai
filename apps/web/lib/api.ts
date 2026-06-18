@@ -37,11 +37,33 @@ export interface AnswerResult {
   question_index: number;
   completed: boolean;
 }
+export interface CreateInterviewResponse {
+  interview_id: string;
+  candidate_id: string;
+  meeting_url: string;
+  meeting_token: string;
+  status: string;
+  plan: Json | null;
+}
+export interface AnalyticsOverview {
+  total_interviews: number;
+  total_candidates: number;
+  average_score: number | null;
+  recommended_hires: number;
+  conversion_rate: number;
+}
+export interface UserOut {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: string;
+}
 
 export const api = {
   // ── Auth ──
   register: (b: Json) => req<{ access_token: string }>("/auth/register", { method: "POST", body: JSON.stringify(b) }),
   login: (b: Json) => req<{ access_token: string }>("/auth/login", { method: "POST", body: JSON.stringify(b) }),
+  me: (token: string) => req<UserOut>("/auth/me", { token }),
 
   // ── Candidate journey ──
   getMeeting: (token: string) => req<MeetingInfo>(`/meeting/${token}`),
@@ -53,6 +75,9 @@ export const api = {
   },
 
   // ── Recruiter ──
-  overview: (token: string) => req<Json>("/analytics/overview", { token }),
+  overview: (token: string) => req<AnalyticsOverview>("/analytics/overview", { token }),
   listInterviews: (token: string) => req<Json[]>("/interviews", { token }),
+  createInterview: (form: FormData, token: string) =>
+    req<CreateInterviewResponse>("/interviews", { method: "POST", body: form, token }),
+  getInterview: (id: string, token: string) => req<Json>(`/interviews/${id}`, { token }),
 };
