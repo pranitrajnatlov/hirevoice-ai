@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Runtime data — generated at runtime, not source
+data/audio/*
+data/sessions/*
+data/piper_models/*
+
+# Keep placeholder files so git tracks the empty dirs
+!data/audio/.gitkeep
+!data/sessions/.gitkeep
+!data/piper_models/.gitkeep
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets — never commit
+.env
+.env.*
+*.key
+
+# Claude Code workspace files
+.claude/

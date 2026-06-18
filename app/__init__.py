@@ -1,0 +1,1 @@
+"""HireVoice AI application package."""
