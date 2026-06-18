@@ -11,21 +11,44 @@ docker-compose stack is coherent end-to-end. Routers in app/api/v1/ replace the 
 
 from __future__ import annotations
 
-import os
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+# Make the repo root importable (so `services.*` resolves when run from anywhere).
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8800")
+from services.gateway.app.config import settings
+from services.gateway.app.db import init_db
+from services.gateway.app.api.v1 import analytics, auth, interviews, meeting, sessions
 
-app = FastAPI(title="HireVoice API Gateway", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await init_db()       # dev/test convenience; prod uses Alembic
+    yield
+
+
+app = FastAPI(title="HireVoice API Gateway", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],          # tighten to web origin in prod
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+API = "/api/v1"
+app.include_router(auth.router, prefix=API)
+app.include_router(interviews.router, prefix=API)
+app.include_router(meeting.router, prefix=API)
+app.include_router(sessions.router, prefix=API)
+app.include_router(analytics.router, prefix=API)
 
 
 @app.get("/health")
@@ -35,12 +58,6 @@ def health() -> dict:
 
 @app.get("/health/ai")
 async def ai_health() -> dict:
-    """Demonstrates gateway → AI service internal call. Replaced by real orchestration."""
     async with httpx.AsyncClient(timeout=5) as client:
-        r = await client.get(f"{AI_SERVICE_URL}/ai/health")
+        r = await client.get(f"{settings.ai_service_url}/ai/health")
         return {"gateway": "ok", "ai": r.json()}
-
-
-# Phase 2: include_router(auth), include_router(interviews), include_router(sessions),
-#          include_router(candidates), include_router(meeting_links), include_router(analytics)
-#          + Socket.IO mount for the /interview namespace.
