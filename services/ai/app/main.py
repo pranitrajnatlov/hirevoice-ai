@@ -102,30 +102,62 @@ def interview_turn(req: TurnRequest) -> TurnResponse:
     Stateless next-question generation. The gateway owns session state and passes the
     running history + current stage. Mirrors app/interviewer.py prompt construction.
     """
-    stage_hint = {
-        "opening": "Greet the candidate warmly in one sentence, then ask one brief icebreaker about their background.",
-        "technical": "Ask ONE specific technical question about their experience or a concept from their resume. Pick the single most relevant topic — do not combine multiple topics.",
-        "behavioral": "Ask ONE STAR-format question about a specific situation (teamwork, conflict, ownership, or learning from failure).",
-        "closing": "Thank the candidate warmly and invite them to ask any questions they have.",
-    }.get(req.stage, "")
+    # Per-stage guidance: how long to speak and what to focus on.
+    # max_tokens is tuned per stage so the model has room to be natural without rambling.
+    stage_config = {
+        "opening": {
+            "hint": (
+                "Open with a genuine, warm greeting using the candidate's name (from the resume). "
+                "Set a relaxed tone in 1-2 sentences, then ask ONE open question about their background "
+                "or what drew them to this role. Sound human, not scripted."
+            ),
+            "max_tokens": 220,
+        },
+        "technical": {
+            "hint": (
+                "Briefly acknowledge the candidate's last answer in one short sentence if it's natural to do so, "
+                "then pivot to ONE precise technical question. Pick a single skill or project from their resume "
+                "and go deep — do not combine topics or ask follow-up questions in the same turn."
+            ),
+            "max_tokens": 180,
+        },
+        "behavioral": {
+            "hint": (
+                "Ask ONE behavioral question using the STAR framing (Situation/Task/Action/Result). "
+                "Pick a real scenario — conflict resolution, ownership, a time they failed and learned. "
+                "A brief 1-sentence lead-in is fine; end with exactly one question."
+            ),
+            "max_tokens": 180,
+        },
+        "closing": {
+            "hint": (
+                "Wrap up warmly. Thank the candidate genuinely and invite them to ask anything about the "
+                "role, team, or company. Keep it to 2-3 sentences."
+            ),
+            "max_tokens": 150,
+        },
+    }
+    cfg = stage_config.get(req.stage, {"hint": "", "max_tokens": 180})
 
     system = (
-        "You are HireVoice AI conducting a VOICE interview. "
-        "ABSOLUTE RULES — violating these breaks the interview:\n"
-        "1. Ask EXACTLY ONE question per turn. Never combine or list multiple questions.\n"
-        "2. Keep your entire response to 1-2 sentences maximum.\n"
-        "3. Plain spoken English only — no markdown, no bullets, no asterisks, no numbered lists.\n"
-        "4. Do not summarise what the candidate said before asking your question.\n"
-        f"\nCurrent stage: {req.stage.upper()} (turn {req.turn_count + 1} of {req.max_turns}). {stage_hint}"
+        "You are HireVoice AI — a warm, professional voice interviewer. "
+        "This is a spoken conversation, so write exactly as you would speak out loud.\n\n"
+        "NON-NEGOTIABLE RULES:\n"
+        "- End every response with EXACTLY ONE question. Never ask two questions in the same turn.\n"
+        "- Plain conversational English only. No markdown, bullets, asterisks, or numbered lists.\n"
+        "- Do not recap or paraphrase what the candidate just said before asking your question.\n"
+        "- React naturally to what the candidate shares — be curious, not mechanical.\n\n"
+        f"Stage: {req.stage.upper()} (turn {req.turn_count + 1} of {req.max_turns}).\n"
+        f"{cfg['hint']}"
     )
     if req.resume_context:
-        system += f"\n\nCandidate resume (use as context, do not read out loud):\n{req.resume_context}"
+        system += f"\n\nCandidate resume — use name, skills, and projects naturally in conversation:\n{req.resume_context}"
 
     messages = [{"role": "system", "content": system}, *req.history]
     if not req.history:
         messages.append({"role": "user", "content": "Begin the interview now."})
 
-    question = PROVIDERS.llm.chat(messages, temperature=0.7, max_tokens=120)
+    question = PROVIDERS.llm.chat(messages, temperature=0.75, max_tokens=cfg["max_tokens"])
     return TurnResponse(question=question, stage=req.stage)
 
 
