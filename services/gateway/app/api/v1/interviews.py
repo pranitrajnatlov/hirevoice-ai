@@ -54,21 +54,24 @@ async def create_interview(
         db.add(candidate)
         await db.flush()
 
-    # Resume analysis via AI service
+    # Resume analysis via AI service (best-effort: never block interview creation)
     resume_row = None
     plan = None
     if resume is not None:
-        content = await resume.read()
-        analysis = await ai.analyze_resume(resume.filename or "resume.pdf", content)
-        resume_row = Resume(
-            candidate_id=candidate.id,
-            extracted_text=analysis.get("text"),
-            parsed_profile=analysis.get("profile"),
-        )
-        db.add(resume_row)
-        await db.flush()
-        plan = {"focus": analysis.get("profile", {}).get("skills", []), "stages":
-                ["opening", "technical", "behavioral", "closing"]}
+        try:
+            content = await resume.read()
+            analysis = await ai.analyze_resume(resume.filename or "resume.pdf", content)
+            resume_row = Resume(
+                candidate_id=candidate.id,
+                extracted_text=analysis.get("text"),
+                parsed_profile=analysis.get("profile"),
+            )
+            db.add(resume_row)
+            await db.flush()
+            plan = {"focus": analysis.get("profile", {}).get("skills", []),
+                    "stages": ["opening", "technical", "behavioral", "closing"]}
+        except Exception:
+            pass  # Interview proceeds; AI questions won't be resume-tailored
 
     interview = Interview(
         org_id=recruiter.org_id, recruiter_id=recruiter.id, candidate_id=candidate.id,

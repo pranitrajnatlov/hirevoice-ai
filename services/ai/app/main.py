@@ -87,11 +87,11 @@ async def analyze_resume(file: UploadFile = File(...)) -> dict:
         )},
         {"role": "user", "content": text[:6000]},
     ]
-    raw = PROVIDERS.llm.chat(prompt, temperature=0.1, max_tokens=600)
     try:
+        raw = PROVIDERS.llm.chat(prompt, temperature=0.1, max_tokens=600)
         profile = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
     except Exception:
-        profile = {"raw": raw}
+        profile = {}
     return {"text": text, "profile": profile, "chars": len(text)}
 
 

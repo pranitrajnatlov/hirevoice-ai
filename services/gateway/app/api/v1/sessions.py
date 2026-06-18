@@ -113,7 +113,10 @@ async def start_session(
         "history": [], "stage": "opening", "resume_context": resume_ctx,
         "turn_count": 0, "max_turns": _TOTAL_ESTIMATED,
     })
-    q = Question(interview_id=interview.id, seq=1, stage="opening", text=turn["question"])
+    opening_text = (turn["question"] or "").strip()
+    if not opening_text:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "AI service returned an empty opening question")
+    q = Question(interview_id=interview.id, seq=1, stage="opening", text=opening_text)
     db.add(q)
     await db.commit()
 
@@ -123,7 +126,7 @@ async def start_session(
     )
     return SessionStartResponse(
         session_token=session_token, interview_id=interview.id,
-        question=turn["question"], stage="opening", question_index=1,
+        question=opening_text, stage="opening", question_index=1,
         total_estimated=_TOTAL_ESTIMATED,
     )
 
@@ -168,8 +171,11 @@ async def submit_answer(
         "history": await _history(db, interview_id), "stage": stage,
         "resume_context": resume_ctx, "turn_count": answered, "max_turns": _TOTAL_ESTIMATED,
     })
+    question_text = (turn["question"] or "").strip()
+    if not question_text:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "AI service returned an empty question")
     next_seq = (last_q.seq or 0) + 1
-    db.add(Question(interview_id=interview_id, seq=next_seq, stage=stage, text=turn["question"]))
+    db.add(Question(interview_id=interview_id, seq=next_seq, stage=stage, text=question_text))
     await db.commit()
 
     # Emit next question so the UI updates before the HTTP response resolves
