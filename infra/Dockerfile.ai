@@ -1,0 +1,20 @@
+# AI Service — FastAPI wrapper around the existing app/ AI core.
+FROM python:3.13-slim
+
+WORKDIR /workspace
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+# System deps for audio (soundfile/ctranslate2)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 ffmpeg && rm -rf /var/lib/apt/lists/*
+
+# Install AI-core deps + service deps
+COPY requirements.txt ./requirements.txt
+COPY services/ai/requirements.txt ./services/ai/requirements.txt
+RUN pip install -r requirements.txt -r services/ai/requirements.txt
+
+# App code is mounted as a volume in docker-compose for dev; copy for prod builds.
+COPY . .
+
+EXPOSE 8800
+CMD ["uvicorn", "services.ai.app.main:app", "--host", "0.0.0.0", "--port", "8800"]
