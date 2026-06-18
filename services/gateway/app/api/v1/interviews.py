@@ -20,6 +20,7 @@ from services.gateway.app.models import (
     Recruiter,
     Resume,
 )
+from services.gateway.app.config import settings
 from services.gateway.app.schemas import CreateInterviewResponse, InterviewOut
 from services.gateway.app.security import require_recruiter
 
@@ -125,12 +126,18 @@ async def get_interview(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
     cand = await db.get(Candidate, iv.candidate_id)
     asmt = await db.scalar(select(Assessment).where(Assessment.interview_id == iv.id))
+    link = await db.scalar(select(MeetingLink).where(MeetingLink.interview_id == iv.id))
     return {
         "id": iv.id, "role_title": iv.role_title, "status": iv.status,
         "job_description": iv.job_description, "plan": iv.interview_plan,
+        "meeting_token": link.token if link else None,
+        "meeting_url": f"{settings.meeting_link_base}/{link.token}" if link else None,
         "candidate": {"id": cand.id, "name": cand.full_name, "email": cand.email},
         "assessment": {
             "overall_score": asmt.overall_score, "recommendation": asmt.recommendation,
             "strengths": asmt.strengths, "weaknesses": asmt.weaknesses, "summary": asmt.summary,
+            "technical_score": asmt.technical_score,
+            "communication_score": asmt.communication_score,
+            "culture_fit_score": asmt.culture_fit_score,
         } if asmt else None,
     }

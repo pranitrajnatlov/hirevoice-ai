@@ -50,6 +50,7 @@ export interface AnalyticsOverview {
   total_candidates: number;
   average_score: number | null;
   recommended_hires: number;
+  completed: number;
   conversion_rate: number;
 }
 export interface UserOut {

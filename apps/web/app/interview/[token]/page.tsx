@@ -6,6 +6,8 @@ import { motion } from "framer-motion";
 import { api, type MeetingInfo, type SessionStart } from "@/lib/api";
 import { AnswerRecorder } from "@/lib/audio/recorder";
 import { fmtTime } from "@/lib/utils";
+
+const GW_WS = process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:8000";
 import { Button } from "@/components/ui/button";
 import { AiAvatar, type AvatarState } from "@/components/interview/AiAvatar";
 import { VoiceWaveform } from "@/components/interview/VoiceWaveform";
@@ -33,9 +35,11 @@ export default function InterviewRoom() {
   const [error, setError] = useState("");
 
   const recorder = useRef<AnswerRecorder | null>(null);
+  const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     api.getMeeting(token).then(setInfo).catch((e) => { setError(String(e)); setPhase("error"); });
+    return () => { ws.current?.close(); };
   }, [token]);
 
   // interview timer
@@ -62,6 +66,25 @@ export default function InterviewRoom() {
       setSession(s);
       setPhase("live");
       speakThenListen(s.question, s.stage, s.question_index);
+
+      // Open WebSocket for real-time transcript/question events
+      const socket = new WebSocket(`${GW_WS}/api/v1/ws/${s.interview_id}`);
+      ws.current = socket;
+      socket.onmessage = (e) => {
+        const { event, data } = JSON.parse(e.data) as { event: string; data: Record<string, unknown> };
+        if (event === "transcript") {
+          setTurns((t) => [...t, { role: "candidate", text: data.text as string }]);
+          setAvatar("thinking");
+        } else if (event === "question") {
+          bumpScores();
+          speakThenListen(data.text as string, data.stage as string, data.question_index as number);
+        } else if (event === "complete") {
+          setAvatar("idle");
+          setPhase("complete");
+          recorder.current?.dispose();
+        }
+      };
+      socket.onerror = () => console.warn("WS error — falling back to HTTP polling");
     } catch (e) {
       setError(String(e));
       setPhase("error");
@@ -79,17 +102,21 @@ export default function InterviewRoom() {
     setRecording(false);
     setBusy(true);
     setAvatar("thinking");
+    const wsConnected = ws.current?.readyState === WebSocket.OPEN;
     try {
       const blob = await recorder.current.stop();
       const res = await api.submitAnswer(session.interview_id, blob, session.session_token);
-      setTurns((t) => [...t, { role: "candidate", text: res.transcript }]);
-      bumpScores();
-      if (res.completed) {
-        setAvatar("idle");
-        setPhase("complete");
-        recorder.current.dispose();
-      } else {
-        speakThenListen(res.question, res.stage, res.question_index);
+      // If WebSocket is connected it already updated the UI; use HTTP response as fallback only.
+      if (!wsConnected) {
+        setTurns((t) => [...t, { role: "candidate", text: res.transcript }]);
+        bumpScores();
+        if (res.completed) {
+          setAvatar("idle");
+          setPhase("complete");
+          recorder.current.dispose();
+        } else {
+          speakThenListen(res.question, res.stage, res.question_index);
+        }
       }
     } catch (e) {
       setError(String(e));

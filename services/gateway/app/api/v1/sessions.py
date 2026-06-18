@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.gateway.app.ai_client import AIClient, get_ai_client
 from services.gateway.app.api.v1.meeting import resolve_link
 from services.gateway.app.db import get_db
+from services.gateway.app.ws.manager import manager as ws_manager
 from services.gateway.app.models import (
     Assessment,
     Candidate,
@@ -126,6 +127,9 @@ async def submit_answer(
     db.add(Response(question_id=last_q.id, interview_id=interview_id, transcript_text=transcript))
     await db.flush()
 
+    # Emit transcript immediately so the UI can show it before LLM responds
+    await ws_manager.emit(interview_id, "transcript", {"text": transcript})
+
     answered = await db.scalar(
         select(func.count()).select_from(Response).where(Response.interview_id == interview_id)
     )
@@ -134,6 +138,7 @@ async def submit_answer(
     if complete:
         await _finalize(db, ai, interview)
         await db.commit()
+        await ws_manager.emit(interview_id, "complete", {"interview_id": interview_id})
         return AnswerResponse(transcript=transcript, question="", stage="closing",
                               question_index=answered, completed=True)
 
@@ -145,6 +150,11 @@ async def submit_answer(
     next_seq = (last_q.seq or 0) + 1
     db.add(Question(interview_id=interview_id, seq=next_seq, stage=stage, text=turn["question"]))
     await db.commit()
+
+    # Emit next question so the UI updates before the HTTP response resolves
+    await ws_manager.emit(interview_id, "question", {
+        "text": turn["question"], "stage": stage, "question_index": next_seq,
+    })
     return AnswerResponse(transcript=transcript, question=turn["question"], stage=stage,
                           question_index=next_seq, completed=False)
 

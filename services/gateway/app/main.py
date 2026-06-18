@@ -21,12 +21,13 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.gateway.app.config import settings
 from services.gateway.app.db import init_db
 from services.gateway.app.api.v1 import analytics, auth, interviews, meeting, sessions
+from services.gateway.app.ws.manager import manager as ws_manager
 
 
 @asynccontextmanager
@@ -49,6 +50,17 @@ app.include_router(interviews.router, prefix=API)
 app.include_router(meeting.router, prefix=API)
 app.include_router(sessions.router, prefix=API)
 app.include_router(analytics.router, prefix=API)
+
+
+@app.websocket("/api/v1/ws/{interview_id}")
+async def interview_ws(interview_id: str, ws: WebSocket) -> None:
+    """Candidate connects here to receive real-time transcript/question events."""
+    await ws_manager.connect(interview_id, ws)
+    try:
+        while True:
+            await ws.receive_text()   # keep-alive; client may send pings
+    except WebSocketDisconnect:
+        ws_manager.disconnect(interview_id, ws)
 
 
 @app.get("/health")

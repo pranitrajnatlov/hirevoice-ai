@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ type Interview = {
 };
 
 export default function InterviewsPage() {
+  const router = useRouter();
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -69,7 +71,8 @@ export default function InterviewsPage() {
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.04 }}
-                  className="border-b border-border last:border-0 hover:bg-white/5"
+                  className="cursor-pointer border-b border-border last:border-0 hover:bg-white/5"
+                  onClick={() => router.push(`/interviews/${iv.id}`)}
                 >
                   <td className="px-5 py-3 font-medium">{iv.candidate_name}</td>
                   <td className="px-5 py-3 text-ink-muted">{iv.role_title}</td>

@@ -47,5 +47,6 @@ async def overview(
         "total_candidates": total_candidates,
         "average_score": round(float(avg_score), 1) if avg_score is not None else None,
         "recommended_hires": recommended,
+        "completed": completed,
         "conversion_rate": conversion,
     }
