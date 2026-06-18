@@ -103,26 +103,29 @@ def interview_turn(req: TurnRequest) -> TurnResponse:
     running history + current stage. Mirrors app/interviewer.py prompt construction.
     """
     stage_hint = {
-        "opening": "Greet warmly and ask one icebreaker about their background.",
-        "technical": "Ask a specific technical question; probe depth and trade-offs.",
-        "behavioral": "Ask a STAR-format question about teamwork or ownership.",
-        "closing": "Thank them, invite questions, then wrap up.",
+        "opening": "Greet the candidate warmly in one sentence, then ask one brief icebreaker about their background.",
+        "technical": "Ask ONE specific technical question about their experience or a concept from their resume. Pick the single most relevant topic — do not combine multiple topics.",
+        "behavioral": "Ask ONE STAR-format question about a specific situation (teamwork, conflict, ownership, or learning from failure).",
+        "closing": "Thank the candidate warmly and invite them to ask any questions they have.",
     }.get(req.stage, "")
 
     system = (
-        "CRITICAL: voice interview — plain spoken sentences only, no markdown. "
-        "You are HireVoice AI, a professional technical interviewer. "
-        f"Current stage: {req.stage.upper()}. {stage_hint} "
-        f"(Turn {req.turn_count + 1} of {req.max_turns}.)"
+        "You are HireVoice AI conducting a VOICE interview. "
+        "ABSOLUTE RULES — violating these breaks the interview:\n"
+        "1. Ask EXACTLY ONE question per turn. Never combine or list multiple questions.\n"
+        "2. Keep your entire response to 1-2 sentences maximum.\n"
+        "3. Plain spoken English only — no markdown, no bullets, no asterisks, no numbered lists.\n"
+        "4. Do not summarise what the candidate said before asking your question.\n"
+        f"\nCurrent stage: {req.stage.upper()} (turn {req.turn_count + 1} of {req.max_turns}). {stage_hint}"
     )
     if req.resume_context:
-        system += f"\n\nCandidate resume:\n{req.resume_context}"
+        system += f"\n\nCandidate resume (use as context, do not read out loud):\n{req.resume_context}"
 
     messages = [{"role": "system", "content": system}, *req.history]
     if not req.history:
         messages.append({"role": "user", "content": "Begin the interview now."})
 
-    question = PROVIDERS.llm.chat(messages, temperature=0.7, max_tokens=300)
+    question = PROVIDERS.llm.chat(messages, temperature=0.7, max_tokens=120)
     return TurnResponse(question=question, stage=req.stage)
 
 

@@ -82,10 +82,31 @@ async def start_session(
     if interview.status == "completed":
         raise HTTPException(status.HTTP_409_CONFLICT, "Interview already completed")
 
-    if link.consumed_at is None:
-        link.consumed_at = datetime.now(timezone.utc)
+    # Reconnect: candidate already started this interview (e.g. closed tab and came back).
+    # Issue a fresh session token and resume from the last unanswered question.
+    last_q = await db.scalar(
+        select(Question).where(Question.interview_id == interview.id).order_by(Question.seq.desc())
+    )
+    if last_q is not None:
+        answered = await db.scalar(
+            select(func.count()).select_from(Response).where(Response.interview_id == interview.id)
+        )
+        stage, _ = _stage_for(answered)
+        session_token = create_access_token(
+            interview.candidate_id, "candidate", scope="candidate",
+            extra={"interview_id": interview.id},
+        )
+        await db.commit()
+        return SessionStartResponse(
+            session_token=session_token, interview_id=interview.id,
+            question=last_q.text, stage=stage,
+            question_index=last_q.seq, total_estimated=_TOTAL_ESTIMATED,
+        )
+
+    # Fresh start
+    link.consumed_at = datetime.now(timezone.utc)
     interview.status = "in_progress"
-    interview.started_at = interview.started_at or datetime.now(timezone.utc)
+    interview.started_at = datetime.now(timezone.utc)
 
     resume_ctx = await _resume_context(db, interview)
     turn = await ai.interview_turn({
