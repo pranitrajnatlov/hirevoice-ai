@@ -71,6 +71,74 @@ export interface TranscriptResponse {
   turns: TranscriptTurn[];
 }
 
+export interface SkillItem {
+  value: string;
+  confidence?: number;
+}
+export interface AiContext {
+  summary: {
+    name: string | null;
+    years_experience: string | number | null;
+    current_role: string | null;
+    current_company: string | null;
+    preferred_role: string | null;
+    highest_qualification: string | null;
+    location: string | null;
+    domains: string[];
+  };
+  experience: {
+    company: string | null;
+    designation: string | null;
+    duration: string | null;
+    responsibilities: string[];
+    technologies: string[];
+    achievements: string[];
+    confidence?: number | null;
+  }[];
+  skills_by_category: Record<string, SkillItem[]>;
+  projects: {
+    name: string | null;
+    description: string;
+    technologies: string[];
+    responsibilities: string[];
+    domain: string | null;
+    team_size: number | null;
+    achievements: string[];
+    confidence?: number | null;
+  }[];
+  education: { degree: string | null; institution: string | null; dates: string | null; gpa: string | null; confidence?: number | null }[];
+  certifications: string[];
+  achievements: string[];
+  languages: string[];
+  metadata: {
+    parsed: boolean;
+    pages: number | null;
+    parsing_confidence: number;
+    skills_extracted: number;
+    projects_detected: number;
+    companies_detected: number;
+    sections_found: string[];
+  };
+  warnings: string[];
+  interview_context: {
+    experience_years: string | number | null;
+    primary_skills: string[];
+    projects: string[];
+    interview_focus: string[];
+    missing_skills_to_validate: string[];
+    potential_followup_areas: string[];
+    context_text: string;
+  };
+  strategy: {
+    experience_level: string;
+    question_distribution: { label: string; pct: number }[];
+    priority_skills: string[];
+    focus_areas: string[];
+    estimated_duration_min: number;
+  };
+  raw: { profile: unknown; plan: unknown };
+}
+
 export const api = {
   // ── Auth ──
   register: (b: Json) => req<{ access_token: string }>("/auth/register", { method: "POST", body: JSON.stringify(b) }),
@@ -93,4 +161,5 @@ export const api = {
     req<CreateInterviewResponse>("/interviews", { method: "POST", body: form, token }),
   getInterview: (id: string, token: string) => req<Json>(`/interviews/${id}`, { token }),
   getTranscript: (id: string, token: string) => req<TranscriptResponse>(`/interviews/${id}/transcript`, { token }),
+  getAiContext: (id: string, token: string) => req<AiContext>(`/interviews/${id}/ai-context`, { token }),
 };

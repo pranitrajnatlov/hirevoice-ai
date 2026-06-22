@@ -139,6 +139,81 @@ for _canon, _aliases in TECH_ALIASES.items():
 # "spring boot" is matched before "spring".
 CANONICAL_TERMS: list[str] = sorted(TECH_ALIASES.keys(), key=len, reverse=True)
 
+# ── Skill categorization (for the AI Interview Context viewer) ──────────────────
+# canonical tech name -> display category. Anything unmapped falls back to "Other".
+SKILL_CATEGORIES: dict[str, str] = {
+    # Languages
+    "JavaScript": "Languages", "TypeScript": "Languages", "Python": "Languages",
+    "Java": "Languages", "C++": "Languages", "C#": "Languages", "Go": "Languages",
+    "Rust": "Languages", "Ruby": "Languages", "PHP": "Languages", "Kotlin": "Languages",
+    "Swift": "Languages", "Scala": "Languages", "R": "Languages", "SQL": "Languages",
+    "Bash": "Languages",
+    # Frontend
+    "React": "Frontend", "React Native": "Frontend", "Next.js": "Frontend",
+    "Vue.js": "Frontend", "Angular": "Frontend", "Svelte": "Frontend", "Redux": "Frontend",
+    "Tailwind CSS": "Frontend", "HTML": "Frontend", "CSS": "Frontend",
+    # Backend
+    "Spring Boot": "Backend", "Spring": "Backend", "Spring Security": "Backend",
+    "Hibernate": "Backend", "Node.js": "Backend", "Express": "Backend", "Flask": "Backend",
+    "Django": "Backend", "FastAPI": "Backend", ".NET": "Backend", "Ruby on Rails": "Backend",
+    "GraphQL": "Backend", "gRPC": "Backend", "REST": "Backend",
+    # Databases
+    "PostgreSQL": "Databases", "MySQL": "Databases", "MongoDB": "Databases",
+    "Redis": "Databases", "SQLite": "Databases", "Cassandra": "Databases",
+    "DynamoDB": "Databases", "Elasticsearch": "Databases", "Oracle": "Databases",
+    "Snowflake": "Databases", "Databricks": "Databases",
+    # Messaging & Streaming
+    "Kafka": "Messaging & Streaming", "RabbitMQ": "Messaging & Streaming",
+    "Spark": "Messaging & Streaming", "Airflow": "Messaging & Streaming",
+    "Kafka Connect": "Messaging & Streaming",
+    # Cloud / DevOps
+    "AWS": "Cloud", "GCP": "Cloud", "Azure": "Cloud",
+    "Docker": "DevOps", "Kubernetes": "DevOps", "Terraform": "DevOps", "Ansible": "DevOps",
+    "Jenkins": "DevOps", "GitHub Actions": "DevOps", "CI/CD": "DevOps", "Nginx": "DevOps",
+    # Data & ML
+    "TensorFlow": "Data & ML", "PyTorch": "Data & ML", "scikit-learn": "Data & ML",
+    "Pandas": "Data & ML", "NumPy": "Data & ML", "OpenCV": "Data & ML",
+    "Hugging Face": "Data & ML", "LangChain": "Data & ML", "OpenAI": "Data & ML",
+    "Claude": "Data & ML",
+    # Testing
+    "Unit Testing": "Testing", "Integration Testing": "Testing", "JUnit": "Testing",
+    "Mockito": "Testing", "Pytest": "Testing", "Jest": "Testing", "Selenium": "Testing",
+    # Tools / practices
+    "Git": "Tools", "Jira": "Tools", "Linux": "Tools", "OAuth": "Tools", "JWT": "Tools",
+    "Microservices": "Tools", "WebSocket": "Tools", "Agile": "Tools",
+}
+
+# Stable display order for skill categories (only non-empty ones are shown).
+SKILL_CATEGORY_ORDER: list[str] = [
+    "Languages", "Frontend", "Backend", "Databases", "Messaging & Streaming",
+    "Cloud", "DevOps", "Data & ML", "Testing", "Tools", "Other",
+]
+
+
+def categorize_skill(canonical: str) -> str:
+    """Map a canonical skill name to a display category ('Other' if unknown)."""
+    return SKILL_CATEGORIES.get(canonical, "Other")
+
+
+def categorize_skills(skills) -> dict[str, list[dict]]:
+    """
+    Group skills into display categories (spec #2). Accepts a list of canonical name
+    strings or skill dicts ({value, confidence, ...}); returns {category: [skill, ...]}
+    in SKILL_CATEGORY_ORDER, omitting empty categories.
+    """
+    grouped: dict[str, list[dict]] = {}
+    for s in skills or []:
+        if isinstance(s, dict):
+            name = s.get("value")
+            item = s
+        else:
+            name = s
+            item = {"value": s}
+        if not name:
+            continue
+        grouped.setdefault(categorize_skill(name), []).append(item)
+    return {cat: grouped[cat] for cat in SKILL_CATEGORY_ORDER if cat in grouped}
+
 _FUZZY_SKILL_CUTOFF = 88  # high to avoid mapping a real distinct skill to the wrong canonical
 _CLEAN_RE = re.compile(r"[^a-z0-9+#.\s-]")
 

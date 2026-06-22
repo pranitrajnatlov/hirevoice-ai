@@ -191,6 +191,21 @@ async def _resume_profile(db: AsyncSession, iv: Interview) -> dict | None:
     return resume.parsed_profile if resume else None
 
 
+@router.get("/{interview_id}/ai-context")
+async def get_ai_context(
+    interview_id: str, claims: dict = Depends(require_recruiter), db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Sanitized, structured view of the resume context + interview plan the AI used."""
+    from app.interview_context import build_ai_context_view
+
+    iv = await db.get(Interview, interview_id)
+    if not iv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+    profile = await _resume_profile(db, iv) or {}
+    plan = iv.interview_plan if isinstance(iv.interview_plan, dict) else {}
+    return build_ai_context_view(profile, plan, iv.role_title)
+
+
 @router.get("/{interview_id}/transcript")
 async def get_transcript(
     interview_id: str, claims: dict = Depends(require_recruiter), db: AsyncSession = Depends(get_db),

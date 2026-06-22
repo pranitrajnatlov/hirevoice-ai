@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { api, type TranscriptTurn } from "@/lib/api";
+import { api, type TranscriptTurn, type AiContext } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { TranscriptViewer } from "@/components/interview/TranscriptViewer";
+import { AiContextView } from "@/components/interview/AiContextView";
+import { cn } from "@/lib/utils";
 
 type Assessment = {
   overall_score: number;
@@ -81,6 +83,9 @@ export default function InterviewDetailPage() {
   const [copied, setCopied] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptTurn[] | null>(null);
+  const [tab, setTab] = useState<"overview" | "context">("overview");
+  const [aiContext, setAiContext] = useState<AiContext | null>(null);
+  const [contextError, setContextError] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("hv_token") ?? "";
@@ -90,6 +95,14 @@ export default function InterviewDetailPage() {
       .catch(() => router.push("/interviews"))
       .finally(() => setLoading(false));
   }, [id, router]);
+
+  const openContextTab = () => {
+    setTab("context");
+    if (aiContext === null && !contextError) {
+      const token = localStorage.getItem("hv_token") ?? "";
+      api.getAiContext(id, token).then(setAiContext).catch(() => setContextError(true));
+    }
+  };
 
   const openFullAnalysis = () => {
     setDrawerOpen(true);
@@ -113,9 +126,9 @@ export default function InterviewDetailPage() {
   const recClass = REC_COLOR[recLabel] ?? REC_COLOR.pending;
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className={cn("mx-auto transition-[max-width]", tab === "context" ? "max-w-6xl" : "max-w-4xl")}>
       {/* Header */}
-      <div className="mb-6 flex items-start justify-between">
+      <div className="mb-5 flex items-start justify-between">
         <div>
           <Link href="/interviews" className="mb-2 inline-block text-xs text-ink-muted hover:text-ink">
             ← Back to interviews
@@ -128,6 +141,31 @@ export default function InterviewDetailPage() {
         </span>
       </div>
 
+      {/* Tabs */}
+      <div className="mb-6 flex gap-1 border-b border-border">
+        {([["overview", "Overview"], ["context", "AI Interview Context"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={key === "context" ? openContextTab : () => setTab("overview")}
+            className={cn(
+              "-mb-px border-b-2 px-4 py-2.5 text-sm transition-colors",
+              tab === key ? "border-accent font-medium text-ink" : "border-transparent text-ink-muted hover:text-ink",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "context" ? (
+        contextError ? (
+          <div className="glass-card p-12 text-center text-ink-muted">Unable to load AI context for this interview.</div>
+        ) : aiContext === null ? (
+          <div className="text-sm text-ink-muted">Loading AI context…</div>
+        ) : (
+          <AiContextView data={aiContext} interviewId={id} />
+        )
+      ) : (
       <div className="grid gap-5 lg:grid-cols-[1fr_1.4fr]">
         {/* Left column */}
         <div className="flex flex-col gap-5">
@@ -249,6 +287,7 @@ export default function InterviewDetailPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Full analysis drawer (spec #5, #6) */}
       <Dialog open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Full analysis" variant="drawer">

@@ -221,3 +221,156 @@ def build_memory_summary(memory: dict) -> str:
     if memory.get("weak_areas"):
         lines.append("Shaky / unclear areas worth revisiting: " + ", ".join(memory["weak_areas"][:8]))
     return "\n".join(lines)
+
+
+# ── AI Interview Context viewer (recruiter transparency) ───────────────────────
+# Weighted stages drive the question-distribution percentages shown to recruiters.
+# Mirrors the gateway _STAGE_BUDGET (opening1 / experience2 / technical4 / behavioral2 / closing1).
+_STAGE_WEIGHTS: list[tuple[str, int]] = [
+    ("Resume & intro", 1),
+    ("Previous experience", 2),
+    ("Technical deep-dive", 4),
+    ("Behavioral", 2),
+    ("Wrap-up", 1),
+]
+_DEFAULT_FOLLOWUPS = {
+    "senior": ["System Design", "Scalability", "Leadership", "Trade-offs"],
+    "mid": ["Scalability", "Production Support", "Trade-offs"],
+    "junior": ["Fundamentals", "Debugging", "Best Practices"],
+}
+
+
+def build_ai_context_view(profile: dict, plan: dict, role_title: str = "") -> dict:
+    """
+    Assemble the sanitized, structured "AI Interview Context" payload for recruiters.
+
+    Pure function over the stored ``parsed_profile`` + ``interview_plan``. Contains NO
+    system prompts (those are never stored) — only resume-derived and plan-derived data,
+    plus honestly-derived metadata, warnings, and strategy. Modular so future AI artifacts
+    (RAG, embeddings, reasoning trace) can be added as new keys without changing callers.
+    """
+    from app.vocabulary import categorize_skills
+
+    profile = profile or {}
+    plan = plan if isinstance(plan, dict) else {}
+    meta = profile.get("_meta") or {}
+    pi = profile.get("personal_information") or {}
+    experience = profile.get("experience") or []
+    education = profile.get("education") or []
+
+    highest_qual = next((_val(e.get("degree")) or e.get("raw") for e in education
+                         if _val(e.get("degree")) or e.get("raw")), None)
+    current_company = next((_val(e.get("company")) for e in experience if _val(e.get("company"))), None)
+
+    summary = {
+        "name": _val(pi.get("name")),
+        "years_experience": profile.get("years_experience"),
+        "current_role": profile.get("current_role"),
+        "current_company": current_company,
+        "preferred_role": role_title or None,
+        "highest_qualification": highest_qual,
+        "location": _val(pi.get("location")),
+        "domains": profile.get("domains") or [],
+    }
+
+    exp_cards = [{
+        "company": _val(e.get("company")),
+        "designation": _val(e.get("title")),
+        "duration": _val(e.get("dates")),
+        "responsibilities": e.get("responsibilities") or [],
+        "technologies": [_val(t) or t for t in (e.get("technologies") or [])],
+        "achievements": e.get("achievements") or [],
+        "confidence": e.get("confidence"),
+    } for e in experience]
+
+    proj_cards = [{
+        "name": _val(p.get("name")),
+        "description": _val(p.get("description")) or p.get("description") or "",
+        "technologies": [_val(t) or t for t in (p.get("technologies") or [])],
+        "responsibilities": p.get("responsibilities") or [],
+        "domain": _val(p.get("domain")),
+        "team_size": p.get("team_size"),
+        "achievements": p.get("achievements") or [],
+        "confidence": p.get("confidence"),
+    } for p in (profile.get("projects") or [])]
+
+    edu_cards = [{
+        "degree": _val(e.get("degree")),
+        "institution": _val(e.get("institution")) or e.get("raw"),
+        "dates": _val(e.get("dates")),
+        "gpa": e.get("gpa"),
+        "confidence": e.get("confidence"),
+    } for e in education]
+
+    skills = profile.get("skills") or []
+    companies = [c for c in (_val(e.get("company")) for e in experience) if c]
+    pconf = meta.get("parser_confidence")
+    sections_found = meta.get("sections_found") or []
+
+    metadata = {
+        "parsed": bool(profile),
+        "pages": meta.get("pages"),
+        "parsing_confidence": round((pconf or 0) * 100),
+        "skills_extracted": meta.get("skill_count") if meta.get("skill_count") is not None else len(skills),
+        "projects_detected": len(proj_cards),
+        "companies_detected": len(companies),
+        "sections_found": sections_found,
+    }
+
+    warnings: list[str] = []
+    if pconf is not None and pconf < 0.6:
+        warnings.append(f"Overall parsing confidence is low ({round(pconf * 100)}%).")
+    if meta.get("low_confidence_fields"):
+        warnings.append(f"{len(meta['low_confidence_fields'])} field(s) had low confidence and may be inaccurate.")
+    if sections_found:  # only flag gaps when some structure was actually detected
+        if "education" not in sections_found and not education:
+            warnings.append("Education section was not detected.")
+        if "skills" not in sections_found:
+            warnings.append("Skills were inferred from context rather than a dedicated section.")
+    if not proj_cards:
+        warnings.append("No projects were detected on the resume.")
+
+    focus = plan.get("focus") or []
+    memory = plan.get("memory") or {}
+    validated = {v.lower() for v in (memory.get("validated_skills") or [])}
+    missing = [s for s in focus if s.lower() not in validated]
+    level = plan.get("experience_level") or infer_experience_level(profile)
+    followups = list(memory.get("weak_areas") or [])
+    for f in _DEFAULT_FOLLOWUPS.get(level, ["System Design", "Scalability"]):
+        if f not in followups:
+            followups.append(f)
+
+    interview_context = {
+        "experience_years": profile.get("years_experience"),
+        "primary_skills": focus[:8],
+        "projects": [c["name"] for c in proj_cards if c["name"]][:8],
+        "interview_focus": (focus[:8] or (profile.get("domains") or [])),
+        "missing_skills_to_validate": missing[:8],
+        "potential_followup_areas": followups[:6],
+        "context_text": plan.get("context") or "",
+    }
+
+    total_w = sum(w for _, w in _STAGE_WEIGHTS)
+    strategy = {
+        "experience_level": level,
+        "question_distribution": [{"label": lbl, "pct": round(w / total_w * 100)} for lbl, w in _STAGE_WEIGHTS],
+        "priority_skills": focus[:6],
+        "focus_areas": (profile.get("domains") or [])[:6],
+        "estimated_duration_min": total_w * 3,  # ~3 min per turn, shown as an estimate
+    }
+
+    return {
+        "summary": summary,
+        "experience": exp_cards,
+        "skills_by_category": categorize_skills(skills),
+        "projects": proj_cards,
+        "education": edu_cards,
+        "certifications": profile.get("certifications") or [],
+        "achievements": profile.get("achievements") or [],
+        "languages": profile.get("languages") or [],
+        "metadata": metadata,
+        "warnings": warnings,
+        "interview_context": interview_context,
+        "strategy": strategy,
+        "raw": {"profile": profile, "plan": plan},
+    }
