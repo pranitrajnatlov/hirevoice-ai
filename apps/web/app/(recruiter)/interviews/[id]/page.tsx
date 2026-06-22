@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { api } from "@/lib/api";
+import { api, type TranscriptTurn } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
+import { TranscriptViewer } from "@/components/interview/TranscriptViewer";
 
 type Assessment = {
   overall_score: number;
@@ -77,6 +79,8 @@ export default function InterviewDetailPage() {
   const [interview, setInterview] = useState<Interview | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [transcript, setTranscript] = useState<TranscriptTurn[] | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("hv_token") ?? "";
@@ -86,6 +90,14 @@ export default function InterviewDetailPage() {
       .catch(() => router.push("/interviews"))
       .finally(() => setLoading(false));
   }, [id, router]);
+
+  const openFullAnalysis = () => {
+    setDrawerOpen(true);
+    if (transcript === null) {
+      const token = localStorage.getItem("hv_token") ?? "";
+      api.getTranscript(id, token).then((d) => setTranscript(d.turns)).catch(() => setTranscript([]));
+    }
+  };
 
   const copy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -183,77 +195,47 @@ export default function InterviewDetailPage() {
           )}
         </div>
 
-        {/* Right column — assessment */}
+        {/* Right column — assessment (bounded; full content opens in the drawer, spec #5) */}
         {assessment ? (
           <div className="flex flex-col gap-5">
-            {assessment.summary && (
-              <div className="glass-card p-5">
-                <h3 className="mb-3 text-sm font-semibold text-ink">Summary</h3>
-                <p className="text-sm leading-relaxed text-ink-muted">{assessment.summary}</p>
+            <div className="glass-card p-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-ink">Summary</h3>
+                <Button size="sm" variant="secondary" onClick={openFullAnalysis}>
+                  View full analysis
+                </Button>
               </div>
-            )}
+              <p className="line-clamp-4 text-sm leading-relaxed text-ink-muted">
+                {assessment.summary || "No summary available."}
+              </p>
+            </div>
+
             <div className="glass-card p-5">
               <h3 className="mb-3 text-sm font-semibold text-ink">Strengths</h3>
-              <ul className="flex flex-col gap-2">
+              <ul className="flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
                 {assessment.strengths.map((s, i) => (
-                  <motion.li
-                    key={i}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.06 }}
-                    className="flex items-start gap-2 text-sm text-ink"
-                  >
+                  <li key={i} className="flex items-start gap-2 text-sm text-ink">
                     <span className="mt-0.5 text-success">✓</span> {s}
-                  </motion.li>
-                ))}
-              </ul>
-            </div>
-            <div className="glass-card p-5">
-              <h3 className="mb-3 text-sm font-semibold text-ink">Areas to improve</h3>
-              <ul className="flex flex-col gap-2">
-                {assessment.weaknesses.map((w, i) => (
-                  <motion.li
-                    key={i}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.06 }}
-                    className="flex items-start gap-2 text-sm text-ink-muted"
-                  >
-                    <span className="mt-0.5 text-danger">·</span> {w}
-                  </motion.li>
+                  </li>
                 ))}
               </ul>
             </div>
 
-            {((assessment.evidence && Object.keys(assessment.evidence).length > 0) ||
-              (assessment.unsupported_scores && assessment.unsupported_scores.length > 0)) && (
-              <div className="glass-card p-5">
-                <h3 className="mb-1 text-sm font-semibold text-ink">Evidence</h3>
-                <p className="mb-3 text-xs text-ink-muted">Transcript quotes backing each score.</p>
-                {assessment.evidence && Object.keys(assessment.evidence).length > 0 ? (
-                  <div className="flex flex-col gap-4">
-                    {Object.entries(assessment.evidence).map(([dim, quotes]) => (
-                      <div key={dim}>
-                        <p className="mb-1 text-xs font-medium text-ink">{EVIDENCE_LABELS[dim] ?? dim}</p>
-                        <ul className="flex flex-col gap-1">
-                          {quotes.map((q, i) => (
-                            <li key={i} className="border-l-2 border-accent/40 pl-3 text-xs italic text-ink-muted">
-                              “{q}”
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-ink-muted">No transcript evidence was extracted for this interview.</p>
-                )}
-                {assessment.unsupported_scores && assessment.unsupported_scores.length > 0 && (
-                  <p className="mt-4 rounded-lg bg-yellow-400/10 px-3 py-2 text-xs text-yellow-400">
-                    ⚠ Scores without transcript evidence: {assessment.unsupported_scores.map((d) => EVIDENCE_LABELS[d] ?? d).join(", ")}
-                  </p>
-                )}
-              </div>
+            <div className="glass-card p-5">
+              <h3 className="mb-3 text-sm font-semibold text-ink">Areas to improve</h3>
+              <ul className="flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
+                {assessment.weaknesses.map((w, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-ink-muted">
+                    <span className="mt-0.5 text-danger">·</span> {w}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {assessment.unsupported_scores && assessment.unsupported_scores.length > 0 && (
+              <p className="rounded-lg bg-yellow-400/10 px-3 py-2 text-xs text-yellow-400">
+                ⚠ Scores without transcript evidence: {assessment.unsupported_scores.map((d) => EVIDENCE_LABELS[d] ?? d).join(", ")}
+              </p>
             )}
           </div>
         ) : (
@@ -267,6 +249,76 @@ export default function InterviewDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Full analysis drawer (spec #5, #6) */}
+      <Dialog open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Full analysis" variant="drawer">
+        {assessment && (
+          <div className="flex flex-col gap-6">
+            {assessment.summary && (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold text-ink">Summary</h3>
+                <p className="text-sm leading-relaxed text-ink-muted">{assessment.summary}</p>
+              </section>
+            )}
+
+            {assessment.strengths.length > 0 && (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold text-ink">Strengths</h3>
+                <ul className="flex flex-col gap-1.5">
+                  {assessment.strengths.map((s, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-ink">
+                      <span className="mt-0.5 text-success">✓</span> {s}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {assessment.weaknesses.length > 0 && (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold text-ink">Areas to improve</h3>
+                <ul className="flex flex-col gap-1.5">
+                  {assessment.weaknesses.map((w, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-ink-muted">
+                      <span className="mt-0.5 text-danger">·</span> {w}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {assessment.evidence && Object.keys(assessment.evidence).length > 0 && (
+              <section>
+                <h3 className="mb-1 text-sm font-semibold text-ink">Evidence</h3>
+                <p className="mb-2 text-xs text-ink-muted">Transcript quotes backing each score.</p>
+                <div className="flex flex-col gap-3">
+                  {Object.entries(assessment.evidence).map(([dim, quotes]) => (
+                    <div key={dim}>
+                      <p className="mb-1 text-xs font-medium text-ink">{EVIDENCE_LABELS[dim] ?? dim}</p>
+                      <ul className="flex flex-col gap-1">
+                        {quotes.map((q, i) => (
+                          <li key={i} className="border-l-2 border-accent/40 pl-3 text-xs italic text-ink-muted">
+                            “{q}”
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-ink">Transcript</h3>
+              {transcript === null ? (
+                <p className="text-sm text-ink-muted">Loading transcript…</p>
+              ) : (
+                <TranscriptViewer turns={transcript} />
+              )}
+            </section>
+          </div>
+        )}
+      </Dialog>
     </div>
   );
 }

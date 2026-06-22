@@ -59,6 +59,17 @@ export interface UserOut {
   full_name: string | null;
   role: string;
 }
+export interface TranscriptTurn {
+  role: "interviewer" | "candidate";
+  text: string;
+  stage: string;
+  is_followup: boolean;
+  ts: string | null;
+}
+export interface TranscriptResponse {
+  interview_id: string;
+  turns: TranscriptTurn[];
+}
 
 export const api = {
   // ── Auth ──
@@ -81,4 +92,5 @@ export const api = {
   createInterview: (form: FormData, token: string) =>
     req<CreateInterviewResponse>("/interviews", { method: "POST", body: form, token }),
   getInterview: (id: string, token: string) => req<Json>(`/interviews/${id}`, { token }),
+  getTranscript: (id: string, token: string) => req<TranscriptResponse>(`/interviews/${id}/transcript`, { token }),
 };
