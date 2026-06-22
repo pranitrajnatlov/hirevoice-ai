@@ -7,14 +7,18 @@ import { cn } from "@/lib/utils";
 export function MicButton({
   recording,
   busy,
+  finishing = false,
   onPress,
   onRelease,
 }: {
   recording: boolean;
   busy: boolean;
+  /** Grace period after release — still capturing trailing speech. */
+  finishing?: boolean;
   onPress: () => void;
   onRelease: () => void;
 }) {
+  const active = recording || finishing;
   return (
     <div className="flex flex-col items-center gap-2">
       <motion.button
@@ -26,18 +30,24 @@ export function MicButton({
         className={cn(
           "relative grid h-20 w-20 place-items-center rounded-full text-white transition-colors",
           "disabled:opacity-50",
-          recording ? "bg-danger" : "accent-gradient shadow-glow",
+          finishing ? "bg-warn" : recording ? "bg-danger" : "accent-gradient shadow-glow",
         )}
       >
-        {recording &&
+        {active &&
           [0, 0.5].map((d) => (
-            <span key={d} className="absolute h-20 w-20 rounded-full bg-danger/30 animate-pulse-ring"
-              style={{ animationDelay: `${d}s` }} />
+            <span
+              key={d}
+              className={cn(
+                "absolute h-20 w-20 rounded-full animate-pulse-ring",
+                finishing ? "bg-warn/30" : "bg-danger/30",
+              )}
+              style={{ animationDelay: `${d}s` }}
+            />
           ))}
         {busy ? <Loader2 className="h-7 w-7 animate-spin" /> : <Mic className="h-7 w-7" />}
       </motion.button>
       <span className="text-xs text-ink-muted">
-        {busy ? "Processing…" : recording ? "Release to send" : "Hold to speak"}
+        {busy ? "Processing…" : finishing ? "Finishing…" : recording ? "Release to send" : "Hold to speak"}
       </span>
     </div>
   );

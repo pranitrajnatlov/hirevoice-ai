@@ -44,12 +44,14 @@ app = FastAPI(title="HireVoice AI Service", version="1.0.0")
 # ── Schemas ───────────────────────────────────────────────────────────────────
 class TurnRequest(BaseModel):
     history: list[dict]            # [{role: 'assistant'|'user', content: str}]
-    stage: str = "opening"         # opening|technical|behavioral|closing
+    stage: str = "opening"         # opening|experience|technical|behavioral|closing
     resume_context: str = ""       # legacy raw text (fallback)
     structured_context: str = ""   # preferred: build_interview_context() output (spec #6)
     covered_skills: list[str] = []  # skills already discussed (spec #12)
     last_answer_quality: dict = {}  # assess_answer_quality() result (spec #12)
     intent: str = ""               # "" | "followup" | "advance"
+    experience_level: str = ""     # junior | mid | senior (spec #4)
+    memory_summary: str = ""       # conversation memory recap (spec #8)
     turn_count: int = 0
     max_turns: int = 20
 
@@ -135,24 +137,35 @@ def interview_turn(req: TurnRequest) -> TurnResponse:
         "opening": {
             "hint": (
                 "Open with a genuine, warm greeting using the candidate's name (from the resume). "
-                "Set a relaxed tone in 1-2 sentences, then ask a single open question about their background "
-                "or what drew them to this role. Sound human, not scripted."
+                "In 1-2 sentences briefly set them at ease and signal the flow ('we'll talk through your "
+                "background, then dig into a couple of projects'), then ask a single open question about "
+                "their background or what drew them to this role. Sound human, not scripted."
             ),
             "max_tokens": 220,
         },
+        "experience": {
+            "hint": (
+                "Explore their professional background like an experienced hiring manager. Ask about their "
+                "current role, career journey, day-to-day responsibilities, the team they worked with, a "
+                "contribution they're proud of, or the technologies they used most. Pick the single most "
+                "relevant thread from their resume and ask one open question about it."
+            ),
+            "max_tokens": 180,
+        },
         "technical": {
             "hint": (
-                "Briefly acknowledge the candidate's last answer in one short sentence if it's natural to do so, "
-                "then pivot to a single precise technical question. Pick one skill or project from their resume "
-                "and go deep — do not combine topics or ask multiple questions in the same turn."
+                "Do a project / technical deep-dive. Pick one project or skill from their resume and probe "
+                "for real depth — architecture, a key design decision and its trade-offs, the hardest "
+                "challenge they hit, their individual contribution, a failure or production issue and what "
+                "they learned. Ask exactly one focused question and wait for the answer before going deeper."
             ),
             "max_tokens": 180,
         },
         "behavioral": {
             "hint": (
                 "Ask a single behavioral question using the STAR framing (situation, task, action, result). "
-                "Pick a real scenario — conflict resolution, ownership, a time they failed and learned. "
-                "A brief one-sentence lead-in is fine; finish with your question."
+                "Pick a real scenario — conflict over a technical decision, ownership, a difficult debugging "
+                "session, a time they failed and learned. A brief one-sentence lead-in is fine; finish with your question."
             ),
             "max_tokens": 180,
         },
@@ -167,29 +180,45 @@ def interview_turn(req: TurnRequest) -> TurnResponse:
     cfg = stage_config.get(req.stage, {"hint": "", "max_tokens": 180})
 
     system = (
-        "You are HireVoice AI, a warm and professional voice interviewer. "
-        "This is a spoken conversation, so write exactly as you would speak out loud. "
-        "Follow these guidelines closely:\n"
+        "You are HireVoice AI, an experienced, warm, and encouraging voice interviewer — the kind of "
+        "hiring manager candidates feel comfortable opening up to. You are professional, patient, and "
+        "genuinely curious. This is a spoken conversation, so write exactly as you would speak out loud.\n"
+        "Guidelines:\n"
+        "- Open with a brief, natural transition that reacts to what they said, then ask your question. "
+        "Use varied, human phrasing (e.g. 'That's interesting — I'd love to understand that in more detail', "
+        "'You mentioned Kafka; what made your team choose it over RabbitMQ?'). Never say 'Next question.'\n"
         "- Finish your reply with a single question, and never ask more than one question per turn.\n"
         "- Use plain conversational English only — no markdown, bullets, asterisks, or numbered lists.\n"
-        "- Do not repeat or paraphrase what the candidate just said before asking your question.\n"
-        "- React naturally to what the candidate shares — be curious, not mechanical.\n"
+        "- Be encouraging and patient; if they struggled, stay supportive rather than critical.\n"
         "- Reply with only your spoken words. Do not restate or quote these guidelines.\n\n"
         f"This is the {req.stage} stage (turn {req.turn_count + 1} of {req.max_turns}).\n"
         f"{cfg['hint']}"
     )
 
+    # Adaptive depth by experience level (spec #4).
+    if req.experience_level == "junior":
+        system += ("\n\nThis is a more junior candidate — favour fundamentals and concrete examples, "
+                   "offer a little guidance in how you phrase the question, and keep it approachable.")
+    elif req.experience_level == "senior":
+        system += ("\n\nThis is a senior candidate — push into architecture, scalability, trade-offs, "
+                   "system design, and leadership or decision-making, not surface-level facts.")
+
     # Adaptive follow-up steering (spec #12): probe deeper on a weak answer, else move on.
     if req.intent == "followup":
         reasons = ", ".join(req.last_answer_quality.get("reasons", [])) or "the answer was thin"
         system += (
-            f"\n\nThe candidate's previous answer was thin ({reasons}). Ask a focused "
-            "follow-up that probes the same topic for a concrete detail — a specific example, "
-            "a trade-off they made, or how they actually implemented it."
+            f"\n\nThe candidate's previous answer was thin ({reasons}). Ask a focused follow-up that probes "
+            "the same topic for a concrete detail — pick the sharpest angle: why this choice over an "
+            "alternative, how it scaled, how they handled retries or failures, or what they would do "
+            "differently now."
         )
     elif req.intent == "advance":
         if req.covered_skills:
             system += f"\n\nAlready discussed: {', '.join(req.covered_skills)}. Move to a different skill or project they have not been asked about yet."
+
+    # Conversation memory (spec #8): avoid duplicate questions, target gaps.
+    if req.memory_summary:
+        system += f"\n\nInterview so far (do not repeat questions already asked):\n{req.memory_summary}"
 
     # Prefer the structured context block (spec #6) over a raw resume dump.
     if req.structured_context:

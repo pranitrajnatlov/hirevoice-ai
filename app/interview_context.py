@@ -138,3 +138,86 @@ def assess_answer_quality(question: str, answer: str) -> dict:
         "word_count": wc,
         "overlap": round(overlap, 2),
     }
+
+
+# ── Adaptive strategy (spec #4) ────────────────────────────────────────────────
+def infer_experience_level(profile: dict) -> str:
+    """
+    Classify the candidate as junior / mid / senior (spec #4), deterministically.
+
+    Prefers ``years_experience`` (from LLM resume enrichment), falling back to the
+    number of experience entries when years aren't available.
+    """
+    if not profile:
+        return "mid"
+    yrs = profile.get("years_experience")
+    if isinstance(yrs, str):
+        m = re.search(r"\d+(?:\.\d+)?", yrs)
+        yrs = float(m.group(0)) if m else None
+    if isinstance(yrs, (int, float)):
+        if yrs < 2:
+            return "junior"
+        if yrs < 6:
+            return "mid"
+        return "senior"
+    n = len(profile.get("experience") or [])
+    if n <= 1:
+        return "junior"
+    if n <= 2:
+        return "mid"
+    return "senior"
+
+
+# ── Conversation memory (spec #8) ──────────────────────────────────────────────
+def empty_memory() -> dict:
+    return {
+        "covered_topics": [],
+        "validated_skills": [],
+        "weak_areas": [],
+        "strong_areas": [],
+        "confidence_samples": [],
+    }
+
+
+def update_memory(memory: dict, *, question: str, answer: str, quality: dict,
+                  skills_in_answer: list[str]) -> dict:
+    """Fold one Q/A turn into the running interview memory (spec #8). Pure; returns a new dict."""
+    m = {**empty_memory(), **(memory or {})}
+    topic = (question or "").strip()[:80]
+    if topic and topic not in m["covered_topics"]:
+        m["covered_topics"] = m["covered_topics"][-15:] + [topic]
+
+    weak = bool(quality.get("weak"))
+    for sk in skills_in_answer:
+        bucket = "weak_areas" if weak else "validated_skills"
+        if sk not in m[bucket]:
+            m[bucket] = m[bucket] + [sk]
+        # a validated skill shouldn't linger in weak (and vice-versa)
+        other = "validated_skills" if weak else "weak_areas"
+        m[other] = [s for s in m[other] if s != sk]
+
+    summary = (answer or "").strip()[:70]
+    if summary and not weak and summary not in m["strong_areas"]:
+        m["strong_areas"] = (m["strong_areas"] + [summary])[-8:]
+
+    m["confidence_samples"] = (m["confidence_samples"] + [0.0 if weak else 1.0])[-20:]
+    return m
+
+
+def memory_confidence(memory: dict) -> float:
+    samples = (memory or {}).get("confidence_samples") or []
+    return round(sum(samples) / len(samples), 2) if samples else 0.5
+
+
+def build_memory_summary(memory: dict) -> str:
+    """Compact, model-friendly recap so the AI avoids duplicate questions (spec #8)."""
+    if not memory:
+        return ""
+    lines: list[str] = []
+    if memory.get("covered_topics"):
+        lines.append("Already asked about: " + "; ".join(memory["covered_topics"][-8:]))
+    if memory.get("validated_skills"):
+        lines.append("Skills the candidate demonstrated well: " + ", ".join(memory["validated_skills"][:12]))
+    if memory.get("weak_areas"):
+        lines.append("Shaky / unclear areas worth revisiting: " + ", ".join(memory["weak_areas"][:8]))
+    return "\n".join(lines)

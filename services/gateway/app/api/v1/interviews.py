@@ -18,7 +18,9 @@ from services.gateway.app.models import (
     Candidate,
     Interview,
     MeetingLink,
+    Question,
     Recruiter,
+    Response,
     Resume,
 )
 from services.gateway.app.config import settings
@@ -60,23 +62,30 @@ async def create_interview(
     plan = None
     if resume is not None:
         try:
+            from app.interview_context import build_interview_context, infer_experience_level
             content = await resume.read()
             analysis = await ai.analyze_resume(resume.filename or "resume.pdf", content)
+            profile = analysis.get("profile") or {}
+            # Inject the authoritative candidate name (the parser can mis-read it from
+            # flattened text, causing the AI to greet the wrong name).
+            profile.setdefault("personal_information", {})
+            profile["personal_information"]["name"] = {"value": candidate_name, "confidence": 1.0}
+
             resume_row = Resume(
                 candidate_id=candidate.id,
                 extracted_text=analysis.get("text"),
-                parsed_profile=analysis.get("profile"),
+                parsed_profile=profile,
             )
             db.add(resume_row)
             await db.flush()
-            profile = analysis.get("profile") or {}
             skills = [s.get("value") if isinstance(s, dict) else s for s in (profile.get("skills") or [])]
-            # Cache vocabulary + structured context so we build them once (spec #17).
+            # Cache vocabulary + structured context (rebuilt with the correct name) once (spec #17).
             plan = {
                 "focus": [s for s in skills if s],
                 "vocabulary": analysis.get("vocabulary", []),
-                "context": analysis.get("context", ""),
-                "stages": ["opening", "technical", "behavioral", "closing"],
+                "context": build_interview_context(profile),
+                "experience_level": infer_experience_level(profile),
+                "stages": ["opening", "experience", "technical", "behavioral", "closing"],
             }
         except Exception:
             pass  # Interview proceeds; AI questions won't be resume-tailored
@@ -179,3 +188,38 @@ async def _resume_profile(db: AsyncSession, iv: Interview) -> dict | None:
         return None
     resume = await db.get(Resume, iv.resume_id)
     return resume.parsed_profile if resume else None
+
+
+@router.get("/{interview_id}/transcript")
+async def get_transcript(
+    interview_id: str, claims: dict = Depends(require_recruiter), db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Ordered interview transcript (interviewer questions + candidate answers) for the viewer."""
+    iv = await db.get(Interview, interview_id)
+    if not iv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+
+    questions = (await db.execute(
+        select(Question).where(Question.interview_id == interview_id).order_by(Question.seq)
+    )).scalars().all()
+    responses = {
+        r.question_id: r for r in (await db.execute(
+            select(Response).where(Response.interview_id == interview_id)
+        )).scalars().all()
+    }
+
+    turns: list[dict] = []
+    for q in questions:
+        turns.append({
+            "role": "interviewer", "text": q.text, "stage": q.stage,
+            "is_followup": q.is_followup,
+            "ts": q.asked_at.isoformat() if q.asked_at else None,
+        })
+        resp = responses.get(q.id)
+        if resp and resp.transcript_text:
+            turns.append({
+                "role": "candidate", "text": resp.transcript_text, "stage": q.stage,
+                "is_followup": False,
+                "ts": resp.created_at.isoformat() if resp.created_at else None,
+            })
+    return {"interview_id": interview_id, "turns": turns}

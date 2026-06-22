@@ -32,9 +32,12 @@ from services.gateway.app.security import create_access_token, get_current_claim
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
-# Stage budgets (matches app/interviewer.py): opening 1, technical 4, behavioral 2, closing 1
-_STAGE_BUDGET = [("opening", 1), ("technical", 4), ("behavioral", 2), ("closing", 1)]
+# Stage budgets: opening 1, experience 2, technical/project deep-dive 4, behavioral 2, closing 1.
+# An "experience" stage explores professional background before the technical deep-dive (spec #3).
+_STAGE_BUDGET = [("opening", 1), ("experience", 2), ("technical", 4), ("behavioral", 2), ("closing", 1)]
 _TOTAL_ESTIMATED = sum(n for _, n in _STAGE_BUDGET)
+# Stages where a weak answer should trigger a deeper follow-up rather than advancing.
+_PROBE_STAGES = {"experience", "technical"}
 
 
 def _stage_for(answered: int) -> tuple[str, bool]:
@@ -79,6 +82,14 @@ async def _structured_context(db: AsyncSession, interview: Interview) -> str:
 def _vocabulary(interview: Interview) -> list[str]:
     """Cached candidate vocabulary for STT boosting + transcript correction (spec #9)."""
     return _plan(interview).get("vocabulary", []) or []
+
+
+async def _parsed_profile(db: AsyncSession, interview: Interview) -> dict:
+    """The structured resume profile, for experience-level inference + context."""
+    if not interview.resume_id:
+        return {}
+    resume = await db.get(Resume, interview.resume_id)
+    return (resume.parsed_profile or {}) if resume else {}
 
 
 def _covered_skills(interview: Interview, history: list[dict]) -> list[str]:
@@ -141,13 +152,22 @@ async def start_session(
         )
 
     # Fresh start
+    from app.interview_context import infer_experience_level
     link.consumed_at = datetime.now(timezone.utc)
     interview.status = "in_progress"
     interview.started_at = datetime.now(timezone.utc)
 
-    resume_ctx = await _resume_context(db, interview)
+    # Cache the inferred experience level once for the whole interview (spec #4).
+    profile = await _parsed_profile(db, interview)
+    plan = dict(_plan(interview))
+    plan["experience_level"] = infer_experience_level(profile)
+    interview.interview_plan = plan
+
     turn = await ai.interview_turn({
-        "history": [], "stage": "opening", "resume_context": resume_ctx,
+        "history": [], "stage": "opening",
+        "structured_context": await _structured_context(db, interview),
+        "resume_context": await _resume_context(db, interview),
+        "experience_level": plan["experience_level"],
         "turn_count": 0, "max_turns": _TOTAL_ESTIMATED,
     })
     opening_text = (turn["question"] or "").strip()
@@ -215,14 +235,29 @@ async def submit_answer(
         return AnswerResponse(transcript=transcript, question="", stage="closing",
                               question_index=answered, completed=True)
 
-    # Adaptive follow-up decision (spec #12): probe deeper on a weak technical answer.
-    from app.interview_context import assess_answer_quality
+    # Adaptive follow-up decision (spec #12): probe deeper on a weak answer in a probe stage.
+    from app.interview_context import (
+        assess_answer_quality, build_memory_summary, empty_memory,
+        infer_experience_level, update_memory,
+    )
     quality = assess_answer_quality(last_q.text, transcript)
     intent, is_followup = "advance", False
-    if stage == "technical" and quality["weak"] and not last_q.is_followup:
+    if stage in _PROBE_STAGES and quality["weak"] and not last_q.is_followup:
         intent, is_followup = "followup", True  # one follow-up per question, avoid loops
 
     history = await _history(db, interview_id)
+
+    # Update + persist conversation memory (spec #8).
+    plan = dict(_plan(interview))
+    skills_now = [s for s in _covered_skills(interview, history) if s.lower() in transcript.lower()]
+    memory = update_memory(
+        plan.get("memory") or empty_memory(),
+        question=last_q.text, answer=transcript, quality=quality, skills_in_answer=skills_now,
+    )
+    plan["memory"] = memory
+    interview.interview_plan = plan  # reassign so SQLAlchemy persists the JSON change
+
+    profile = await _parsed_profile(db, interview)
     turn = await ai.interview_turn({
         "history": history, "stage": stage,
         "structured_context": await _structured_context(db, interview),
@@ -230,6 +265,8 @@ async def submit_answer(
         "covered_skills": _covered_skills(interview, history),
         "last_answer_quality": quality,
         "intent": intent,
+        "experience_level": plan.get("experience_level") or infer_experience_level(profile),
+        "memory_summary": build_memory_summary(memory),
         "turn_count": answered, "max_turns": _TOTAL_ESTIMATED,
     })
     question_text = (turn["question"] or "").strip()
