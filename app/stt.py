@@ -8,9 +8,11 @@ OpenAI mode: OpenAI Whisper API (Phase 4)
 from __future__ import annotations
 
 import logging
+import math
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 from app.config import (
     SAMPLE_RATE,
@@ -114,6 +116,97 @@ def transcribe(
         text = " ".join(seg.text.strip() for seg in segments).strip()
         logger.info("STT result (%s, %.1fs): %s", info.language, info.duration, text[:80])
         return text
+    finally:
+        if isinstance(audio_path, Path) and audio_path.parent == Path(tempfile.gettempdir()):
+            audio_path.unlink(missing_ok=True)
+
+
+# ── Detailed transcription: word timestamps, confidence, vocab boosting (spec #7-9) ──
+@dataclass
+class WordTiming:
+    word: str
+    start: float
+    end: float
+    confidence: float
+
+
+@dataclass
+class TranscriptionResult:
+    text: str
+    words: list[WordTiming] = field(default_factory=list)
+    avg_confidence: float = 1.0
+    language: str = "en"
+    duration: float = 0.0
+
+
+def _build_prompt(vocabulary: Optional[Sequence[str]]) -> tuple[str, str]:
+    """Build (initial_prompt, hotwords) from a candidate vocabulary to bias decoding (spec #9)."""
+    if not vocabulary:
+        return "", ""
+    terms = [t for t in vocabulary if t][:60]  # whisper prompt budget is small
+    if not terms:
+        return "", ""
+    initial_prompt = "Glossary of terms used: " + ", ".join(terms) + "."
+    hotwords = " ".join(terms)
+    return initial_prompt, hotwords
+
+
+def transcribe_detailed(
+    audio: Union[str, Path, tuple, object],
+    *,
+    vocabulary: Optional[Sequence[str]] = None,
+    language: Optional[str] = "en",
+) -> TranscriptionResult:
+    """
+    Transcribe with word-level timestamps, per-word confidence, and vocabulary biasing.
+
+    Falls back gracefully: OpenAI mode returns text-only (no word timings); if the
+    installed faster-whisper predates ``hotwords``, it retries with ``initial_prompt`` only.
+    """
+    if is_openai_mode():
+        return TranscriptionResult(text=_transcribe_openai(audio), language=language or "en")
+
+    _ensure_registered()
+    rm = get_resource_manager()
+    model = rm.load(ModelType.STT)
+    rm.touch(ModelType.STT)
+    audio_path = _prepare_audio(audio)
+
+    initial_prompt, hotwords = _build_prompt(vocabulary)
+    common = dict(
+        language=language,
+        beam_size=STT_BEAM_SIZE,
+        vad_filter=True,
+        word_timestamps=True,
+        initial_prompt=initial_prompt or None,
+    )
+    try:
+        try:
+            segments, info = model.transcribe(str(audio_path), hotwords=hotwords or None, **common)
+        except TypeError:
+            # older faster-whisper without `hotwords` — initial_prompt still biases decoding
+            segments, info = model.transcribe(str(audio_path), **common)
+
+        words: list[WordTiming] = []
+        parts: list[str] = []
+        for seg in segments:
+            parts.append(seg.text.strip())
+            for w in (getattr(seg, "words", None) or []):
+                words.append(WordTiming(
+                    word=w.word.strip(),
+                    start=round(float(w.start), 2),
+                    end=round(float(w.end), 2),
+                    confidence=round(float(getattr(w, "probability", 1.0)), 3),
+                ))
+        text = " ".join(p for p in parts if p).strip()
+        avg_conf = round(sum(x.confidence for x in words) / len(words), 3) if words else \
+            round(math.exp(getattr(info, "avg_logprob", 0.0) or 0.0), 3) if info else 1.0
+        logger.info("STT detailed (%s, %.1fs, conf=%.2f): %s",
+                    info.language, info.duration, avg_conf, text[:80])
+        return TranscriptionResult(
+            text=text, words=words, avg_confidence=avg_conf,
+            language=info.language, duration=round(info.duration, 2),
+        )
     finally:
         if isinstance(audio_path, Path) and audio_path.parent == Path(tempfile.gettempdir()):
             audio_path.unlink(missing_ok=True)

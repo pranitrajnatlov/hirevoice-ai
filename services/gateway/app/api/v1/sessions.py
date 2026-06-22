@@ -8,6 +8,7 @@ Stage machine mirrors app/interviewer.py budgets; the gateway owns session state
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -51,6 +52,42 @@ async def _resume_context(db: AsyncSession, interview: Interview) -> str:
         return ""
     resume = await db.get(Resume, interview.resume_id)
     return (resume.extracted_text or "")[:4000] if resume else ""
+
+
+def _plan(interview: Interview) -> dict:
+    return interview.interview_plan if isinstance(interview.interview_plan, dict) else {}
+
+
+async def _structured_context(db: AsyncSession, interview: Interview) -> str:
+    """
+    Prefer the cached structured context (built once at create time, spec #6/#17).
+    Falls back to building it from parsed_profile, then to raw resume text.
+    """
+    plan = _plan(interview)
+    if plan.get("context"):
+        return plan["context"]
+    if interview.resume_id:
+        resume = await db.get(Resume, interview.resume_id)
+        if resume and resume.parsed_profile:
+            from app.interview_context import build_interview_context
+            ctx = build_interview_context(resume.parsed_profile)
+            if ctx:
+                return ctx
+    return ""
+
+
+def _vocabulary(interview: Interview) -> list[str]:
+    """Cached candidate vocabulary for STT boosting + transcript correction (spec #9)."""
+    return _plan(interview).get("vocabulary", []) or []
+
+
+def _covered_skills(interview: Interview, history: list[dict]) -> list[str]:
+    """Resume skills already mentioned by the candidate so far (drives 'advance', spec #12)."""
+    focus = _plan(interview).get("focus", []) or []
+    if not focus:
+        return []
+    said = " ".join(m["content"] for m in history if m.get("role") == "user").lower()
+    return [s for s in focus if s and s.lower() in said]
 
 
 async def _history(db: AsyncSession, interview_id: str) -> list[dict]:
@@ -147,12 +184,24 @@ async def submit_answer(
     last_q = await db.scalar(
         select(Question).where(Question.interview_id == interview_id).order_by(Question.seq.desc())
     )
-    transcript = await ai.transcribe(await audio.read())
+
+    # Transcribe with the candidate's vocabulary (boosting + context-aware correction).
+    vocab = _vocabulary(interview)
+    prior = await _history(db, interview_id)
+    history_text = " ".join(m["content"] for m in prior)
+    stt = await ai.transcribe_detailed(
+        await audio.read(), vocabulary=vocab,
+        history=history_text, job_description=interview.job_description or "",
+    )
+    transcript = stt.get("text", "") if isinstance(stt, dict) else str(stt)
+
     db.add(Response(question_id=last_q.id, interview_id=interview_id, transcript_text=transcript))
     await db.flush()
 
     # Emit transcript immediately so the UI can show it before LLM responds
-    await ws_manager.emit(interview_id, "transcript", {"text": transcript})
+    await ws_manager.emit(interview_id, "transcript", {
+        "text": transcript, "corrections": stt.get("corrections", []) if isinstance(stt, dict) else [],
+    })
 
     answered = await db.scalar(
         select(func.count()).select_from(Response).where(Response.interview_id == interview_id)
@@ -166,23 +215,37 @@ async def submit_answer(
         return AnswerResponse(transcript=transcript, question="", stage="closing",
                               question_index=answered, completed=True)
 
-    resume_ctx = await _resume_context(db, interview)
+    # Adaptive follow-up decision (spec #12): probe deeper on a weak technical answer.
+    from app.interview_context import assess_answer_quality
+    quality = assess_answer_quality(last_q.text, transcript)
+    intent, is_followup = "advance", False
+    if stage == "technical" and quality["weak"] and not last_q.is_followup:
+        intent, is_followup = "followup", True  # one follow-up per question, avoid loops
+
+    history = await _history(db, interview_id)
     turn = await ai.interview_turn({
-        "history": await _history(db, interview_id), "stage": stage,
-        "resume_context": resume_ctx, "turn_count": answered, "max_turns": _TOTAL_ESTIMATED,
+        "history": history, "stage": stage,
+        "structured_context": await _structured_context(db, interview),
+        "resume_context": await _resume_context(db, interview),
+        "covered_skills": _covered_skills(interview, history),
+        "last_answer_quality": quality,
+        "intent": intent,
+        "turn_count": answered, "max_turns": _TOTAL_ESTIMATED,
     })
     question_text = (turn["question"] or "").strip()
     if not question_text:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "AI service returned an empty question")
     next_seq = (last_q.seq or 0) + 1
-    db.add(Question(interview_id=interview_id, seq=next_seq, stage=stage, text=question_text))
+    db.add(Question(interview_id=interview_id, seq=next_seq, stage=stage,
+                    text=question_text, is_followup=is_followup))
     await db.commit()
 
     # Emit next question so the UI updates before the HTTP response resolves
     await ws_manager.emit(interview_id, "question", {
-        "text": turn["question"], "stage": stage, "question_index": next_seq,
+        "text": question_text, "stage": stage, "question_index": next_seq,
+        "is_followup": is_followup,
     })
-    return AnswerResponse(transcript=transcript, question=turn["question"], stage=stage,
+    return AnswerResponse(transcript=transcript, question=question_text, stage=stage,
                           question_index=next_seq, completed=False)
 
 
@@ -207,16 +270,21 @@ async def _finalize(db: AsyncSession, ai: AIClient, interview: Interview) -> Non
         f"{'Interviewer' if m['role'] == 'assistant' else 'Candidate'}: {m['content']}"
         for m in history
     )
-    resume_ctx = await _resume_context(db, interview)
+    # Prefer the structured context for resume-consistency checking (spec #13).
+    resume_ctx = await _structured_context(db, interview) or await _resume_context(db, interview)
     a = await ai.assess(transcript, resume_ctx)
 
     db.add(Assessment(
         interview_id=interview.id,
         overall_score=a.get("overall_score"), technical_score=a.get("technical_score"),
         communication_score=a.get("communication_score"), culture_fit_score=a.get("culture_fit_score"),
+        confidence_score=a.get("confidence_score"),
+        resume_alignment=a.get("resume_consistency_score"),
         strengths=a.get("strengths", []), weaknesses=a.get("weaknesses", []),
         red_flags=a.get("red_flags", []), recommendation=a.get("recommendation", "pending"),
-        summary=a.get("summary", ""), raw_output=a.get("raw_output", ""),
+        summary=a.get("summary", ""),
+        # Persist the full assessment (evidence + extra dimensions) as JSON for the detail API.
+        raw_output=json.dumps(a),
     ))
     interview.status = "completed"
     interview.completed_at = datetime.now(timezone.utc)

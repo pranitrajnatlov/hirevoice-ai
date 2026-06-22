@@ -32,6 +32,26 @@ class AIClient:
             r.raise_for_status()
             return r.json()["text"]
 
+    async def transcribe_detailed(
+        self, content: bytes, *, vocabulary: list[str] | None = None,
+        history: str = "", job_description: str = "", partial: bool = False,
+    ) -> dict:
+        """Transcribe with vocabulary boosting + context-aware post-processing (spec #7-11)."""
+        import json as _json
+        data = {
+            "vocabulary": _json.dumps(vocabulary or []),
+            "history": history, "job_description": job_description,
+            "partial": str(partial).lower(),
+        }
+        timeout = 30 if partial else 120
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(
+                f"{self.base_url}/ai/stt/transcribe",
+                files={"file": ("a.wav", content)}, data=data,
+            )
+            r.raise_for_status()
+            return r.json()
+
     async def assess(self, transcript: str, resume_context: str = "") -> dict:
         async with httpx.AsyncClient(timeout=180) as c:
             r = await c.post(

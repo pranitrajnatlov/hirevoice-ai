@@ -33,13 +33,15 @@ export default function InterviewRoom() {
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
+  const [partial, setPartial] = useState("");
 
   const recorder = useRef<AnswerRecorder | null>(null);
   const ws = useRef<WebSocket | null>(null);
+  const sttWs = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     api.getMeeting(token).then(setInfo).catch((e) => { setError(String(e)); setPhase("error"); });
-    return () => { ws.current?.close(); };
+    return () => { ws.current?.close(); sttWs.current?.close(); };
   }, [token]);
 
   // interview timer
@@ -109,14 +111,39 @@ export default function InterviewRoom() {
   };
 
   const onPress = () => {
-    if (avatar !== "listening" || busy) return;
-    recorder.current?.start();
+    if (avatar !== "listening" || busy || !session) return;
+    setPartial("");
+
+    // Open a streaming-STT socket and feed it the accumulated audio for live partials.
+    try {
+      const s = new WebSocket(`${GW_WS}/api/v1/ws/stt/${session.interview_id}`);
+      sttWs.current = s;
+      s.onmessage = (e) => {
+        try {
+          const m = JSON.parse(e.data) as { event: string; text?: string };
+          if (m.event === "partial") setPartial(m.text ?? "");
+        } catch {
+          /* ignore malformed partial */
+        }
+      };
+      s.onerror = () => console.warn("STT stream unavailable — final transcript only");
+    } catch {
+      sttWs.current = null;
+    }
+
+    recorder.current?.start((accumulated) => {
+      const s = sttWs.current;
+      if (s && s.readyState === WebSocket.OPEN) s.send(accumulated);
+    });
     setRecording(true);
   };
 
   const onRelease = async () => {
     if (!recording || !session || !recorder.current) return;
     setRecording(false);
+    sttWs.current?.close();
+    sttWs.current = null;
+    setPartial("");
     setBusy(true);
     setAvatar("thinking");
     const wsConnected = ws.current?.readyState === WebSocket.OPEN;
@@ -214,6 +241,12 @@ export default function InterviewRoom() {
           <div className="glass-card p-5">
             <h3 className="mb-3 text-sm font-semibold text-ink">Transcript</h3>
             <LiveTranscript turns={turns} />
+            {recording && partial && (
+              <p className="mt-3 border-l-2 border-accent/50 pl-3 text-sm italic text-ink-muted">
+                {partial}
+                <span className="ml-1 animate-pulse">…</span>
+              </p>
+            )}
           </div>
         </div>
       </div>

@@ -12,6 +12,7 @@ docker-compose stack is coherent end-to-end. Routers in app/api/v1/ replace the 
 from __future__ import annotations
 
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -62,6 +63,55 @@ async def interview_ws(interview_id: str, ws: WebSocket) -> None:
             await ws.receive_text()   # keep-alive; client may send pings
     except WebSocketDisconnect:
         ws_manager.disconnect(interview_id, ws)
+
+
+@app.websocket("/api/v1/ws/stt/{interview_id}")
+async def stt_stream_ws(interview_id: str, ws: WebSocket) -> None:
+    """
+    Chunked near-real-time transcription (spec #7).
+
+    The client streams the *accumulated* webm blob (header + all chunks; lone webm
+    chunks aren't independently decodable) as a binary frame every ~1.5s. We re-transcribe
+    the growing buffer with the interview's vocabulary and push back a partial transcript.
+    Single-flight + min-interval throttle keeps the small local model responsive; the
+    authoritative transcript is still produced by the HTTP submit-answer call on release.
+    """
+    from services.gateway.app.ai_client import ai_client
+    from services.gateway.app.db import SessionLocal
+    from services.gateway.app.models import Interview
+
+    await ws.accept()
+
+    # Load the cached vocabulary once for this socket.
+    vocab: list[str] = []
+    try:
+        async with SessionLocal() as db:
+            iv = await db.get(Interview, interview_id)
+            plan = iv.interview_plan if iv and isinstance(iv.interview_plan, dict) else {}
+            vocab = plan.get("vocabulary", []) or []
+    except Exception:
+        pass
+
+    in_flight = False
+    last_run = 0.0
+    MIN_INTERVAL = 2.0
+    try:
+        while True:
+            audio = await ws.receive_bytes()
+            now = time.monotonic()
+            if in_flight or (now - last_run) < MIN_INTERVAL:
+                continue  # drop this tick; partials are best-effort
+            in_flight, last_run = True, now
+            try:
+                res = await ai_client.transcribe_detailed(audio, vocabulary=vocab, partial=True)
+                await ws.send_json({"event": "partial", "text": res.get("text", ""),
+                                    "confidence": res.get("confidence")})
+            except Exception:
+                pass  # a failed partial never breaks the stream
+            finally:
+                in_flight = False
+    except WebSocketDisconnect:
+        return
 
 
 @app.get("/health")

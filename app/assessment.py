@@ -19,6 +19,17 @@ from app.config import PROMPTS_DIR
 logger = logging.getLogger(__name__)
 
 
+# Scored dimensions (spec #13). Each should be backed by transcript evidence.
+SCORE_DIMENSIONS = (
+    "technical",
+    "communication",
+    "problem_solving",
+    "experience_relevance",
+    "confidence",
+    "resume_consistency",
+)
+
+
 @dataclass
 class AssessmentResult:
     candidate_name: Optional[str] = None
@@ -27,6 +38,10 @@ class AssessmentResult:
     technical_score: int = 0
     communication_score: int = 0
     culture_fit_score: int = 0
+    problem_solving_score: int = 0
+    experience_relevance_score: int = 0
+    confidence_score: int = 0
+    resume_consistency_score: int = 0
     strengths: list[str] = field(default_factory=list)
     weaknesses: list[str] = field(default_factory=list)
     technical_highlights: list[str] = field(default_factory=list)
@@ -34,6 +49,9 @@ class AssessmentResult:
     recommendation: str = "pending"
     summary: str = ""
     suggested_next_steps: list[str] = field(default_factory=list)
+    # spec #13: each scored dimension -> supporting quotes from the transcript.
+    evidence: dict[str, list[str]] = field(default_factory=dict)
+    unsupported_scores: list[str] = field(default_factory=list)
     parse_error: bool = False
     raw_output: str = ""
 
@@ -137,6 +155,18 @@ def _coerce_recommendation(value: Any) -> str:
     return s if s in valid else "maybe"
 
 
+def _coerce_evidence(value: Any) -> dict[str, list[str]]:
+    """Normalize evidence into {dimension: [quote, ...]} keeping only known dimensions."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for dim in SCORE_DIMENSIONS:
+        quotes = _coerce_list(value.get(dim))
+        if quotes:
+            out[dim] = quotes[:4]
+    return out
+
+
 def _parse_assessment(raw: str) -> AssessmentResult:
     """Parse and coerce LLM output into an AssessmentResult."""
     cleaned = _strip_fences(raw)
@@ -148,14 +178,30 @@ def _parse_assessment(raw: str) -> AssessmentResult:
         logger.warning("JSON parse failed: %s — raw: %s", exc, raw[:200])
         return AssessmentResult(parse_error=True, raw_output=raw)
 
+    evidence = _coerce_evidence(data.get("evidence"))
+    scores = {
+        "technical": _coerce_score(data.get("technical_score"), 5),
+        "communication": _coerce_score(data.get("communication_score"), 5),
+        "problem_solving": _coerce_score(data.get("problem_solving_score"), 5),
+        "experience_relevance": _coerce_score(data.get("experience_relevance_score"), 5),
+        "confidence": _coerce_score(data.get("confidence_score"), 5),
+        "resume_consistency": _coerce_score(data.get("resume_consistency_score"), 5),
+    }
+    # spec #13: never accept an unexplained score — flag any dimension lacking evidence.
+    unsupported = [dim for dim in SCORE_DIMENSIONS if not evidence.get(dim)]
+
     # Coerce each field defensively
     return AssessmentResult(
         candidate_name=data.get("candidate_name") or None,
         role_assessed=str(data.get("role_assessed") or "Software Engineer"),
         overall_score=_coerce_score(data.get("overall_score"), 5),
-        technical_score=_coerce_score(data.get("technical_score"), 5),
-        communication_score=_coerce_score(data.get("communication_score"), 5),
+        technical_score=scores["technical"],
+        communication_score=scores["communication"],
         culture_fit_score=_coerce_score(data.get("culture_fit_score"), 5),
+        problem_solving_score=scores["problem_solving"],
+        experience_relevance_score=scores["experience_relevance"],
+        confidence_score=scores["confidence"],
+        resume_consistency_score=scores["resume_consistency"],
         strengths=_coerce_list(data.get("strengths")),
         weaknesses=_coerce_list(data.get("weaknesses")),
         technical_highlights=_coerce_list(data.get("technical_highlights")),
@@ -163,6 +209,8 @@ def _parse_assessment(raw: str) -> AssessmentResult:
         recommendation=_coerce_recommendation(data.get("recommendation")),
         summary=str(data.get("summary") or ""),
         suggested_next_steps=_coerce_list(data.get("suggested_next_steps")),
+        evidence=evidence,
+        unsupported_scores=unsupported,
         raw_output=raw,
     )
 
@@ -217,10 +265,27 @@ def generate_assessment(
     return AssessmentResult(parse_error=True, raw_output=last_raw)
 
 
+_SCHEMA_INSTRUCTION = (
+    "Output ONLY a JSON object with these keys:\n"
+    "  overall_score, technical_score, communication_score, problem_solving_score,\n"
+    "  experience_relevance_score, confidence_score, resume_consistency_score  (integers 1-10),\n"
+    "  culture_fit_score (integer 1-10),\n"
+    "  recommendation (one of: strong_hire, hire, maybe, no_hire),\n"
+    "  summary (string), strengths/weaknesses/red_flags/suggested_next_steps (arrays of strings),\n"
+    "  evidence (object mapping each of: technical, communication, problem_solving,\n"
+    "    experience_relevance, confidence, resume_consistency -> an array of SHORT VERBATIM\n"
+    "    quotes from the transcript that justify that score).\n"
+    "Rules: every score MUST be backed by at least one evidence quote — never invent a score "
+    "without transcript evidence. 'resume_consistency' compares the candidate's spoken claims "
+    "against their resume. Quote the transcript exactly; do not paraphrase in evidence."
+)
+
+
 def _build_user_message(transcript: str, resume_context: str) -> str:
     parts = []
     if resume_context:
         parts.append(f"## Candidate Resume\n{resume_context.strip()}")
     parts.append(f"## Interview Transcript\n{transcript.strip()}")
+    parts.append(_SCHEMA_INSTRUCTION)
     parts.append("Generate the assessment JSON now.")
     return "\n\n".join(parts)

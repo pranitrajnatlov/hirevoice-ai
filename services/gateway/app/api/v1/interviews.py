@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -68,8 +69,15 @@ async def create_interview(
             )
             db.add(resume_row)
             await db.flush()
-            plan = {"focus": analysis.get("profile", {}).get("skills", []),
-                    "stages": ["opening", "technical", "behavioral", "closing"]}
+            profile = analysis.get("profile") or {}
+            skills = [s.get("value") if isinstance(s, dict) else s for s in (profile.get("skills") or [])]
+            # Cache vocabulary + structured context so we build them once (spec #17).
+            plan = {
+                "focus": [s for s in skills if s],
+                "vocabulary": analysis.get("vocabulary", []),
+                "context": analysis.get("context", ""),
+                "stages": ["opening", "technical", "behavioral", "closing"],
+            }
         except Exception:
             pass  # Interview proceeds; AI questions won't be resume-tailored
 
@@ -130,17 +138,44 @@ async def get_interview(
     cand = await db.get(Candidate, iv.candidate_id)
     asmt = await db.scalar(select(Assessment).where(Assessment.interview_id == iv.id))
     link = await db.scalar(select(MeetingLink).where(MeetingLink.interview_id == iv.id))
+
+    assessment = None
+    if asmt:
+        # raw_output holds the full assessment JSON (evidence + extra dimensions, spec #13)
+        full: dict = {}
+        if asmt.raw_output:
+            try:
+                full = json.loads(asmt.raw_output)
+            except Exception:
+                full = {}
+        assessment = {
+            "overall_score": asmt.overall_score, "recommendation": asmt.recommendation,
+            "strengths": asmt.strengths, "weaknesses": asmt.weaknesses, "summary": asmt.summary,
+            "technical_score": asmt.technical_score,
+            "communication_score": asmt.communication_score,
+            "culture_fit_score": asmt.culture_fit_score,
+            "problem_solving_score": full.get("problem_solving_score"),
+            "experience_relevance_score": full.get("experience_relevance_score"),
+            "confidence_score": full.get("confidence_score"),
+            "resume_consistency_score": full.get("resume_consistency_score"),
+            "evidence": full.get("evidence", {}),
+            "unsupported_scores": full.get("unsupported_scores", []),
+        }
+
     return {
         "id": iv.id, "role_title": iv.role_title, "status": iv.status,
         "job_description": iv.job_description, "plan": iv.interview_plan,
         "meeting_token": link.token if link else None,
         "meeting_url": f"{settings.meeting_link_base}/{link.token}" if link else None,
         "candidate": {"id": cand.id, "name": cand.full_name, "email": cand.email},
-        "assessment": {
-            "overall_score": asmt.overall_score, "recommendation": asmt.recommendation,
-            "strengths": asmt.strengths, "weaknesses": asmt.weaknesses, "summary": asmt.summary,
-            "technical_score": asmt.technical_score,
-            "communication_score": asmt.communication_score,
-            "culture_fit_score": asmt.culture_fit_score,
-        } if asmt else None,
+        "resume_profile": (await _resume_profile(db, iv)),
+        "assessment": assessment,
     }
+
+
+async def _resume_profile(db: AsyncSession, iv: Interview) -> dict | None:
+    """Surface the structured resume profile (with confidences) for the recruiter UI."""
+    if not iv.resume_id:
+        return None
+    resume = await db.get(Resume, iv.resume_id)
+    return resume.parsed_profile if resume else None

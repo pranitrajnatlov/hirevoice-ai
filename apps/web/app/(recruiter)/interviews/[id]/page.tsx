@@ -12,10 +12,25 @@ type Assessment = {
   technical_score: number;
   communication_score: number;
   culture_fit_score: number;
+  problem_solving_score?: number | null;
+  experience_relevance_score?: number | null;
+  confidence_score?: number | null;
+  resume_consistency_score?: number | null;
   recommendation: string;
   strengths: string[];
   weaknesses: string[];
   summary: string;
+  evidence?: Record<string, string[]>;
+  unsupported_scores?: string[];
+};
+
+const EVIDENCE_LABELS: Record<string, string> = {
+  technical: "Technical",
+  communication: "Communication",
+  problem_solving: "Problem solving",
+  experience_relevance: "Experience relevance",
+  confidence: "Confidence",
+  resume_consistency: "Resume consistency",
 };
 
 type Interview = {
@@ -150,6 +165,18 @@ export default function InterviewDetailPage() {
                 <ScoreBar label="Overall" value={assessment.overall_score} />
                 <ScoreBar label="Technical" value={assessment.technical_score} />
                 <ScoreBar label="Communication" value={assessment.communication_score} />
+                {assessment.problem_solving_score != null && (
+                  <ScoreBar label="Problem solving" value={assessment.problem_solving_score} />
+                )}
+                {assessment.experience_relevance_score != null && (
+                  <ScoreBar label="Experience relevance" value={assessment.experience_relevance_score} />
+                )}
+                {assessment.confidence_score != null && (
+                  <ScoreBar label="Confidence" value={assessment.confidence_score} />
+                )}
+                {assessment.resume_consistency_score != null && (
+                  <ScoreBar label="Resume consistency" value={assessment.resume_consistency_score} />
+                )}
                 <ScoreBar label="Culture fit" value={assessment.culture_fit_score} />
               </div>
             </div>
@@ -197,6 +224,37 @@ export default function InterviewDetailPage() {
                 ))}
               </ul>
             </div>
+
+            {((assessment.evidence && Object.keys(assessment.evidence).length > 0) ||
+              (assessment.unsupported_scores && assessment.unsupported_scores.length > 0)) && (
+              <div className="glass-card p-5">
+                <h3 className="mb-1 text-sm font-semibold text-ink">Evidence</h3>
+                <p className="mb-3 text-xs text-ink-muted">Transcript quotes backing each score.</p>
+                {assessment.evidence && Object.keys(assessment.evidence).length > 0 ? (
+                  <div className="flex flex-col gap-4">
+                    {Object.entries(assessment.evidence).map(([dim, quotes]) => (
+                      <div key={dim}>
+                        <p className="mb-1 text-xs font-medium text-ink">{EVIDENCE_LABELS[dim] ?? dim}</p>
+                        <ul className="flex flex-col gap-1">
+                          {quotes.map((q, i) => (
+                            <li key={i} className="border-l-2 border-accent/40 pl-3 text-xs italic text-ink-muted">
+                              “{q}”
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-ink-muted">No transcript evidence was extracted for this interview.</p>
+                )}
+                {assessment.unsupported_scores && assessment.unsupported_scores.length > 0 && (
+                  <p className="mt-4 rounded-lg bg-yellow-400/10 px-3 py-2 text-xs text-yellow-400">
+                    ⚠ Scores without transcript evidence: {assessment.unsupported_scores.map((d) => EVIDENCE_LABELS[d] ?? d).join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="glass-card flex flex-col items-center justify-center p-12 text-center">
