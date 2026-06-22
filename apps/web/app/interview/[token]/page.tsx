@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { MessageSquareText, PhoneOff } from "lucide-react";
+import { MessageSquareText, PhoneOff, Volume2 } from "lucide-react";
 import { api, type MeetingInfo, type SessionStart } from "@/lib/api";
 import { AnswerRecorder } from "@/lib/audio/recorder";
 import { Button } from "@/components/ui/button";
@@ -51,9 +51,8 @@ export default function InterviewRoom() {
     return () => clearInterval(id);
   }, [phase]);
 
-  const speakThenListen = useCallback(async (text: string, stage: string, index: number) => {
-    setQuestion({ text, stage, index });
-    setTurns((t) => [...t, { role: "interviewer", text }]);
+  // Plays the AI question audio and locks the mic ("speaking") until it ends ("listening").
+  const playQuestionAudio = useCallback(async (text: string) => {
     setAvatar("speaking");
     try {
       const resp = await fetch("/api/v1/tts/synthesize", {
@@ -73,6 +72,18 @@ export default function InterviewRoom() {
       setTimeout(() => setAvatar("listening"), ms);
     }
   }, []);
+
+  const speakThenListen = useCallback((text: string, stage: string, index: number) => {
+    setQuestion({ text, stage, index });
+    setTurns((t) => [...t, { role: "interviewer", text }]);
+    playQuestionAudio(text);
+  }, [playQuestionAudio]);
+
+  // Let a candidate re-hear the current question (no new transcript turn).
+  const replayQuestion = useCallback(() => {
+    if (!question.text || busy || recording || finishing || avatar === "speaking") return;
+    playQuestionAudio(question.text);
+  }, [question.text, busy, recording, finishing, avatar, playQuestionAudio]);
 
   const join = async () => {
     try {
@@ -170,6 +181,31 @@ export default function InterviewRoom() {
     setPhase("complete");
   };
 
+  // Spacebar = hold-to-talk (comfortable hands-free alternative to the button).
+  useEffect(() => {
+    if (phase !== "live") return;
+    const isTyping = () => {
+      const el = document.activeElement;
+      return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat || isTyping()) return;
+      e.preventDefault();
+      onPress();
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || isTyping()) return;
+      e.preventDefault();
+      onRelease();
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  });
+
   if (phase === "error")
     return <Centered><p className="text-danger">Unable to load interview.</p><p className="text-sm text-ink-muted">{error}</p></Centered>;
 
@@ -230,20 +266,37 @@ export default function InterviewRoom() {
 
       {/* Bottom control dock */}
       <div className="glass-card flex items-center justify-between gap-4 px-6 py-4">
-        <button
-          onClick={() => setTranscriptOpen(true)}
-          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-white/5 hover:text-ink"
-        >
-          <MessageSquareText className="h-4 w-4" /> Transcript
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setTranscriptOpen(true)}
+            className="flex items-center gap-2 rounded-full px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-white/5 hover:text-ink"
+          >
+            <MessageSquareText className="h-4 w-4" /> <span className="hidden sm:inline">Transcript</span>
+          </button>
+          <button
+            onClick={replayQuestion}
+            disabled={!question.text || busy || recording || finishing || avatar === "speaking"}
+            title="Replay the question"
+            className="flex items-center gap-2 rounded-full px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-white/5 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Volume2 className="h-4 w-4" /> <span className="hidden sm:inline">Replay</span>
+          </button>
+        </div>
 
-        <MicButton recording={recording} busy={busy} finishing={finishing} onPress={onPress} onRelease={onRelease} />
+        <MicButton
+          recording={recording}
+          busy={busy}
+          finishing={finishing}
+          locked={avatar === "speaking" || avatar === "thinking"}
+          onPress={onPress}
+          onRelease={onRelease}
+        />
 
         <button
           onClick={endEarly}
           className="flex items-center gap-2 rounded-full px-3 py-2 text-sm text-danger transition-colors hover:bg-danger/10"
         >
-          <PhoneOff className="h-4 w-4" /> End
+          <PhoneOff className="h-4 w-4" /> <span className="hidden sm:inline">End</span>
         </button>
       </div>
 

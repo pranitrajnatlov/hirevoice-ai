@@ -129,7 +129,8 @@ async def list_interviews(
     return [
         InterviewOut(
             id=iv.id, role_title=iv.role_title, status=iv.status,
-            candidate_id=cand.id, candidate_name=cand.full_name, created_at=iv.created_at,
+            candidate_id=cand.id, candidate_name=cand.full_name, candidate_email=cand.email,
+            created_at=iv.created_at,
             overall_score=asmt.overall_score if asmt else None,
             recommendation=asmt.recommendation if asmt else None,
         )

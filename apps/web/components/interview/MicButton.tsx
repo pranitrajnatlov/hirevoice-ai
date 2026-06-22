@@ -1,13 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Mic, Loader2 } from "lucide-react";
+import { Mic, MicOff, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function MicButton({
   recording,
   busy,
   finishing = false,
+  locked = false,
   onPress,
   onRelease,
 }: {
@@ -15,21 +16,36 @@ export function MicButton({
   busy: boolean;
   /** Grace period after release — still capturing trailing speech. */
   finishing?: boolean;
+  /** AI is speaking/thinking — candidate must wait, mic is unavailable. */
+  locked?: boolean;
   onPress: () => void;
   onRelease: () => void;
 }) {
   const active = recording || finishing;
+  const disabled = busy || (locked && !active);
+
+  const hint = busy
+    ? "Processing…"
+    : finishing
+      ? "Finishing…"
+      : recording
+        ? "Release to send"
+        : locked
+          ? "Wait for the interviewer…"
+          : "Hold to speak  ·  or hold Space";
+
   return (
     <div className="flex flex-col items-center gap-2">
       <motion.button
-        disabled={busy}
+        disabled={disabled}
         onPointerDown={onPress}
         onPointerUp={onRelease}
         onPointerLeave={() => recording && onRelease()}
-        whileTap={{ scale: 0.94 }}
+        whileTap={disabled ? undefined : { scale: 0.94 }}
+        aria-label={hint}
         className={cn(
           "relative grid h-20 w-20 place-items-center rounded-full text-white transition-colors",
-          "disabled:opacity-50",
+          disabled && "cursor-not-allowed opacity-40",
           finishing ? "bg-warn" : recording ? "bg-danger" : "accent-gradient shadow-glow",
         )}
       >
@@ -44,11 +60,15 @@ export function MicButton({
               style={{ animationDelay: `${d}s` }}
             />
           ))}
-        {busy ? <Loader2 className="h-7 w-7 animate-spin" /> : <Mic className="h-7 w-7" />}
+        {busy ? (
+          <Loader2 className="h-7 w-7 animate-spin" />
+        ) : locked && !active ? (
+          <MicOff className="h-7 w-7" />
+        ) : (
+          <Mic className="h-7 w-7" />
+        )}
       </motion.button>
-      <span className="text-xs text-ink-muted">
-        {busy ? "Processing…" : finishing ? "Finishing…" : recording ? "Release to send" : "Hold to speak"}
-      </span>
+      <span className={cn("text-xs", locked && !active ? "text-warn" : "text-ink-muted")}>{hint}</span>
     </div>
   );
 }

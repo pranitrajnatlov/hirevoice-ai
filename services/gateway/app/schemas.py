@@ -49,6 +49,7 @@ class InterviewOut(BaseModel):
     status: str
     candidate_id: str
     candidate_name: str
+    candidate_email: str | None = None
     created_at: datetime
     overall_score: int | None = None
     recommendation: str | None = None
