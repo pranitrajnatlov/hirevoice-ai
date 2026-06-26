@@ -41,7 +41,8 @@ SECTION_ALIASES: dict[str, list[str]] = {
     ],
     "certifications": [
         "certifications", "certificates", "licenses & certifications", "licenses",
-        "certification",
+        "certification", "certifications & professional development",
+        "professional development",
     ],
     "summary": [
         "summary", "professional summary", "profile", "about", "objective",
@@ -56,6 +57,10 @@ SECTION_ALIASES: dict[str, list[str]] = {
         "achievements", "awards", "honors", "awards & achievements", "accomplishments",
         "awards and achievements",
     ],
+    "additional_information": [
+        "additional information", "other information", "additional details",
+        "other details", "miscellaneous",
+    ],
     "internships": ["internships", "internship", "internship experience"],
     "volunteer": ["volunteer", "volunteer experience", "volunteering", "community service"],
     "publications": ["publications", "papers", "research", "research papers"],
@@ -68,7 +73,11 @@ _LOW_CONF_THRESHOLD = 0.6
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _PHONE_RE = re.compile(r"(\+?\d[\d\s().-]{7,}\d)")
-_LINK_RE = re.compile(r"(https?://\S+|(?:www\.)?(?:linkedin|github)\.com/\S+)", re.I)
+_LINK_RE = re.compile(
+    r"(https?://\S+|(?:www\.)?(?:linkedin|github)\.com/\S+|[a-z0-9-]+\.(?:linkedin|github)\.com/\S+|"
+    r"(?:portfolio|blog|website)[.][a-z0-9.-]+\.[a-z]{2,}(?:/\S*)?)",
+    re.I,
+)
 _YEAR_RANGE_RE = re.compile(
     r"((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec\w*)?\.?\s*"
     r"(?:19|20)\d{2})\s*[-–—to]+\s*(present|current|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec\w*)?\.?\s*(?:19|20)\d{2})",
@@ -85,7 +94,17 @@ _ROLE_RE = re.compile(
     re.I,
 )
 _BULLET_RE = re.compile(r"^\s*[-•*▪◦‣·]\s+")
-_SKILL_SPLIT_RE = re.compile(r"[,|;/]|\s{2,}|•|·|•")
+_SKILL_SPLIT_RE = re.compile(r"[,|;/]|\s{2,}|•|·|•|\(cid:\d+\)")
+
+# Category prefixes commonly found in skills sections (e.g. "FRONTEND: React.js")
+_SKILL_CATEGORY_PREFIX_RE = re.compile(
+    r"^\s*(?:FRONTEND|BACKEND|DATABASES?|DEVOPS(?:\s*&\s*CLOUD)?|TOOLS(?:\s*&\s*PRACTICES)?|"
+    r"CLOUD|LANGUAGES?|FRAMEWORKS?|LIBRARIES|OTHER|MOBILE|TESTING|ML|AI|DATA|INFRASTRUCTURE|"
+    r"WEB|PROGRAMMING|SOFTWARE)\s*[:.]?\s*",
+    re.I,
+)
+# Pattern that detects parenthesized sub-items: e.g. "AWS (EC2, S3, Lambda)"
+_PAREN_SUB_RE = re.compile(r"([A-Za-z0-9./#+-]+(?:\s+[A-Za-z0-9./#+-]+)?)\s*\(([^)]+)\)")
 
 
 # ── Layout extraction (spec #1, #3) ────────────────────────────────────────────
@@ -130,7 +149,9 @@ def _extract_pdf_layout(path: Path) -> tuple[list[str], int]:
         with pdfplumber.open(str(path)) as pdf:
             pages = len(pdf.pages)
             for page in pdf.pages:
-                all_lines.extend(_page_lines_columnaware(page))
+                text = page.extract_text(layout=True, keep_blank_chars=True)
+                if text:
+                    all_lines.extend(text.split("\n"))
         if all_lines:
             return _clean_lines("\n".join(all_lines)), pages
     except Exception as exc:  # pragma: no cover - depends on file/lib
@@ -138,51 +159,6 @@ def _extract_pdf_layout(path: Path) -> tuple[list[str], int]:
 
     text = _extract_pdf(path)  # existing pypdf path
     return _clean_lines(text), text.count("\f") + 1
-
-
-def _page_lines_columnaware(page) -> list[str]:
-    """
-    Detect columns by clustering word x-positions, then read column-by-column,
-    top-to-bottom within each column. Handles two-column / sidebar resumes.
-    """
-    words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
-    if not words:
-        return []
-
-    page_width = page.width or max((w["x1"] for w in words), default=1)
-    mid = page_width / 2
-    left = [w for w in words if (w["x0"] + w["x1"]) / 2 < mid]
-    right = [w for w in words if (w["x0"] + w["x1"]) / 2 >= mid]
-
-    # Two-column only if both sides are substantial; otherwise treat as single column.
-    if len(left) > 12 and len(right) > 12:
-        groups = [left, right]
-    else:
-        groups = [words]
-
-    lines: list[str] = []
-    for group in groups:
-        lines.extend(_words_to_lines(group))
-    return lines
-
-
-def _words_to_lines(words: list[dict], y_tol: float = 3.0) -> list[str]:
-    """Group words into visual lines by their vertical position."""
-    rows: list[tuple[float, list[dict]]] = []
-    for w in sorted(words, key=lambda w: (round(w["top"], 1), w["x0"])):
-        placed = False
-        for i, (top, row) in enumerate(rows):
-            if abs(w["top"] - top) <= y_tol:
-                row.append(w)
-                placed = True
-                break
-        if not placed:
-            rows.append((w["top"], [w]))
-    out = []
-    for _, row in sorted(rows, key=lambda r: r[0]):
-        text = " ".join(x["text"] for x in sorted(row, key=lambda x: x["x0"]))
-        out.append(text)
-    return out
 
 
 def _extract_docx_layout(path: Path) -> str:
@@ -203,7 +179,15 @@ def _extract_docx_layout(path: Path) -> str:
 
 
 def _clean_lines(text: str) -> list[str]:
-    return [ln.strip() for ln in text.replace("\r", "\n").split("\n") if ln.strip()]
+    lines = []
+    for ln in text.replace("\r", "\n").split("\n"):
+        ln = ln.strip()
+        # Remove common standalone footer "Page X" or "Page X of Y"
+        if re.match(r"^Page\s+\d+(?:\s+of\s+\d+)?$", ln, re.I):
+            continue
+        if ln:
+            lines.append(ln)
+    return lines
 
 
 # ── Section detection (spec #1) ────────────────────────────────────────────────
@@ -211,7 +195,8 @@ def _match_heading(line: str) -> Optional[tuple[str, float]]:
     """Return (canonical_section, confidence) if the line is a section heading."""
     raw = line.strip()
     words = raw.split()
-    if not raw or len(words) > 5 or len(raw) > 45:
+    # Increase word/length limits to catch headings like "CERTIFICATIONS & PROFESSIONAL DEVELOPMENT"
+    if not raw or len(words) > 7 or len(raw) > 60:
         return None
     if _EMAIL_RE.search(raw) or _PHONE_RE.search(raw):
         return None
@@ -324,25 +309,54 @@ def _extract_experience(lines: list[str], base_conf: float) -> list[dict]:
             entries.append(cur)
         cur = None
 
+    def _is_cid_bullet(line: str) -> bool:
+        """Detect (cid:NNN) bullet markers from pdfplumber."""
+        return bool(re.match(r"^\s*\(cid:\d+\)", line))
+
     for line in lines:
-        date_hit = _YEAR_RANGE_RE.search(line)
-        bullet = bool(_BULLET_RE.match(line))
-        headerish = _is_headerish(line) and not bullet
+        # Clean up (cid:NNN) bullet markers
+        clean_line = re.sub(r"\(cid:\d+\)", "", line).strip()
+        if not clean_line:
+            continue
+
+        date_hit = _YEAR_RANGE_RE.search(clean_line)
+        bullet = bool(_BULLET_RE.match(clean_line)) or _is_cid_bullet(line)
+        headerish = _is_headerish(clean_line) and not bullet
+
+        # Handle pipe-delimited lines: "Company Name | Location" or "Company | Location | Date"
+        pipe_parts = [p.strip() for p in clean_line.split("|") if p.strip()]
+        is_company_location_line = (
+            len(pipe_parts) >= 2
+            and not bullet
+            and not _ROLE_RE.search(clean_line)
+            and any(c.isalpha() for c in pipe_parts[0])
+        )
 
         if headerish and cur and cur.get("responsibilities"):
             _flush()  # new entry begins after we've collected responsibilities
         if cur is None:
-            cur = {"company": None, "title": None, "dates": None,
+            cur = {"company": None, "title": None, "dates": None, "location": None,
                    "responsibilities": [], "technologies": [], "confidence": round(base_conf, 2)}
 
-        if date_hit:
+        if is_company_location_line and cur["company"] is None:
+            # Parse "Company | Location" or "Company | Location | Date" lines
+            cur["company"] = pipe_parts[0]
+            if len(pipe_parts) >= 2:
+                # Check if any part contains a date
+                for part in pipe_parts[1:]:
+                    date_in_part = _YEAR_RANGE_RE.search(part)
+                    if date_in_part:
+                        cur["dates"] = date_in_part.group(0).strip()
+                    else:
+                        cur["location"] = part
+        elif date_hit and not bullet:
             cur["dates"] = date_hit.group(0).strip()
-        elif _ROLE_RE.search(line) and cur["title"] is None and headerish:
-            cur["title"] = line.strip()
-        elif headerish and cur["company"] is None:
-            cur["company"] = line.strip()
-        else:
-            text = _BULLET_RE.sub("", line).strip()
+        elif _ROLE_RE.search(clean_line) and cur["title"] is None and headerish:
+            cur["title"] = clean_line.strip()
+        elif headerish and cur["company"] is None and not is_company_location_line:
+            cur["company"] = clean_line.strip()
+        elif bullet or not headerish:
+            text = _BULLET_RE.sub("", clean_line).strip()
             if text:
                 cur["responsibilities"].append(text)
 
@@ -374,19 +388,61 @@ def _extract_education(lines: list[str], base_conf: float) -> list[dict]:
 def _extract_projects(lines: list[str], base_conf: float) -> list[dict]:
     entries: list[dict] = []
     cur: Optional[dict] = None
+
+    def _is_project_header(line: str) -> bool:
+        """True if line looks like a project title (short, capitalized, non-bullet).
+        Rejects comma-separated tech lists which look headerish but aren't titles."""
+        if _BULLET_RE.match(line):
+            return False
+        clean = re.sub(r"\(cid:\d+\)", "", line).strip()
+        if not clean:
+            return False
+        # Reject if it looks like a lone technology (e.g. "Vercel", "AWS", "TanStack Query")
+        from app.vocabulary import normalize_skill
+        if len(clean.split()) <= 2:
+            _, conf = normalize_skill(clean)
+            if conf >= 0.85:
+                return False
+        # Reject comma-heavy lines (tech lists)
+        if clean.count(",") >= 2:
+            return False
+        return _is_headerish(clean) and len(clean.split()) <= 12
+
     for line in lines:
-        if _is_headerish(line) and not _BULLET_RE.match(line) and len(line.split()) <= 6:
+        clean = re.sub(r"\(cid:\d+\)", "", line).strip()
+        if not clean:
+            continue
+
+        # Handle "Project Name | Tech1, Tech2, ..." on one line
+        if "|" in clean:
+            parts = clean.split("|", 1)
+            name_part = parts[0].strip().rstrip("|")
+            tech_part = parts[1].strip() if len(parts) > 1 else ""
+
+            # Only treat as a new project header if the name part looks like a title
+            if name_part and _is_headerish(name_part) and len(name_part.split()) >= 3:
+                if cur:
+                    entries.append(cur)
+                techs = _detect_inline_tech(tech_part) if tech_part else []
+                cur = {"name": name_part, "description": "", "technologies": techs,
+                       "confidence": round(base_conf, 2)}
+                continue
+
+        if _is_project_header(clean) and len(clean.split()) >= 3:
             if cur:
                 entries.append(cur)
-            cur = {"name": line.strip(), "description": "", "technologies": [],
+            cur = {"name": clean.strip(), "description": "", "technologies": [],
                    "confidence": round(base_conf, 2)}
         elif cur is not None:
-            text = _BULLET_RE.sub("", line).strip()
+            text = _BULLET_RE.sub("", clean).strip()
             cur["description"] = (cur["description"] + " " + text).strip()
     if cur:
         entries.append(cur)
     for e in entries:
-        e["technologies"] = _detect_inline_tech(e["description"])
+        # Merge inline tech from description with those already found from the header
+        desc_techs = _detect_inline_tech(e["description"])
+        existing = set(e["technologies"])
+        e["technologies"] = e["technologies"] + [t for t in desc_techs if t not in existing]
     return entries
 
 
@@ -421,7 +477,24 @@ def _looks_like_skill(token: str) -> bool:
 
 def _extract_skills(lines: list[str]) -> list[dict]:
     """Skill candidates filtered to plausible skills, then normalized to canonical forms."""
-    candidates = [c for c in _extract_list_items(lines) if _looks_like_skill(c)]
+    # Pre-process: strip category prefixes (FRONTEND:, BACKEND:, etc.) and expand
+    # parenthesized sub-items (e.g. "AWS (EC2, S3, Lambda)" -> "AWS", "EC2", "S3", "Lambda")
+    cleaned_lines: list[str] = []
+    for line in lines:
+        # Remove (cid:NNN) markers
+        line = re.sub(r"\(cid:\d+\)", " ", line)
+        # Strip category prefixes
+        line = _SKILL_CATEGORY_PREFIX_RE.sub("", line)
+        # Expand parenthesized sub-skills: "AWS (EC2, S3, Lambda, RDS)" -> "AWS, EC2, S3, Lambda, RDS"
+        expanded = line
+        for m in _PAREN_SUB_RE.finditer(line):
+            parent = m.group(1).strip()
+            children = [c.strip() for c in m.group(2).split(",") if c.strip()]
+            replacement = ", ".join([parent] + children)
+            expanded = expanded.replace(m.group(0), replacement)
+        cleaned_lines.append(expanded)
+
+    candidates = [c for c in _extract_list_items(cleaned_lines) if _looks_like_skill(c)]
     skills = normalize_skills(candidates)
     # keep known tech (high conf) or genuinely short unknown tokens (<=2 words) as niche skills
     return [s for s in skills if s["confidence"] >= 0.85 or len(s["value"].split()) <= 2]
@@ -433,6 +506,80 @@ def _detect_inline_tech(text: str) -> list[str]:
         return []
     found = normalize_skills(_extract_list_items([text]))
     return [s["value"] for s in found if s["confidence"] >= 0.85]
+
+
+# ── Additional Information parser ──────────────────────────────────────────────
+def _parse_additional_information(lines: list[str]) -> dict:
+    """
+    Parse the 'Additional Information' composite section which typically contains
+    mixed sub-fields like Languages, Interests, Achievements on one or more lines
+    separated by pipes.
+    """
+    result: dict[str, list[str]] = {"languages": [], "achievements": [], "interests": []}
+    full_text = " ".join(re.sub(r"\(cid:\d+\)", " ", ln) for ln in lines)
+
+    # Clean up some common PDF artifacts before processing
+    full_text = full_text.replace(" | ", "|").replace(" |", "|").replace("| ", "|")
+    
+    # Simple explicit string matching to find the start of each section
+    lang_idx = max(full_text.lower().find("languages:"), full_text.lower().find("language:"))
+    int_idx = max(full_text.lower().find("interests:"), full_text.lower().find("interest:"))
+    ach_idx = max(full_text.lower().find("achievements:"), full_text.lower().find("awards:"))
+
+    # Extract languages if present
+    if lang_idx != -1:
+        # Find where the next section starts, or end of string, or the pipe character if it's acting as a major section delimiter
+        end_idx = len(full_text)
+        for idx in [int_idx, ach_idx]:
+            if idx != -1 and idx > lang_idx and idx < end_idx:
+                end_idx = idx
+        
+        # Also look for a pipe before the next section
+        pipe_idx = full_text.find("|", lang_idx)
+        if pipe_idx != -1 and pipe_idx < end_idx:
+            # If there's a pipe, it often delimits major sections like "Languages: English | Interests: ..."
+            # But sometimes it delimits items. If the text after pipe doesn't contain another key soon, it might be an item.
+            # Let's assume pipe acts as an item delimiter here just like comma.
+            pass
+
+        lang_str = full_text[lang_idx:end_idx].split(":", 1)[1].strip()
+        # Clean trailing pipe if it's right before the next section
+        if lang_str.endswith("|"):
+            lang_str = lang_str[:-1]
+            
+        items = re.split(r"[|•·,]|\(cid:\d+\)", lang_str)
+        result["languages"].extend([i.strip() for i in items if len(i.strip()) >= 2])
+
+    # Extract interests if present
+    if int_idx != -1:
+        end_idx = len(full_text)
+        for idx in [lang_idx, ach_idx]:
+            if idx != -1 and idx > int_idx and idx < end_idx:
+                end_idx = idx
+                
+        int_str = full_text[int_idx:end_idx].split(":", 1)[1].strip()
+        if int_str.endswith("|"):
+            int_str = int_str[:-1]
+            
+        items = re.split(r"[|•·,]|\(cid:\d+\)", int_str)
+        result["interests"].extend([i.strip() for i in items if len(i.strip()) >= 2])
+
+    # Extract achievements if present
+    if ach_idx != -1:
+        end_idx = len(full_text)
+        for idx in [lang_idx, int_idx]:
+            if idx != -1 and idx > ach_idx and idx < end_idx:
+                end_idx = idx
+                
+        ach_str = full_text[ach_idx:end_idx].split(":", 1)[1].strip()
+        if ach_str.endswith("|"):
+            ach_str = ach_str[:-1]
+            
+        # For achievements, we don't want to split by comma as much because it breaks up sentences
+        items = re.split(r"[|•·]|\(cid:\d+\)", ach_str)
+        result["achievements"].extend([i.strip() for i in items if len(i.strip()) >= 2])
+
+    return result
 
 
 # ── Orchestration (spec #2, #5) ────────────────────────────────────────────────
@@ -452,6 +599,17 @@ def parse_resume(source: str | Path, *, is_text: bool = False) -> dict:
     # Skills (most important downstream — drives vocabulary + interview context)
     skills = _extract_skills(sections.get("skills", []))
 
+    # Certifications: clean (cid:NNN) bullet markers from items
+    cert_lines = sections.get("certifications", [])
+    cert_items = _extract_list_items([re.sub(r"\(cid:\d+\)", " ", ln) for ln in cert_lines])
+
+    # Additional information (composite section with languages, achievements, interests)
+    addl_info = _parse_additional_information(sections.get("additional_information", []))
+
+    # Merge languages/achievements from dedicated sections + additional_information
+    lang_items = _extract_list_items(sections.get("languages", [])) + addl_info["languages"]
+    achv_items = _extract_list_items(sections.get("achievements", [])) + addl_info["achievements"]
+
     profile: dict = {
         "personal_information": _extract_contact(preamble, extract.raw_text, conf("personal_information", 0.7)),
         "summary": _vc(" ".join(sections.get("summary", []))[:600], conf("summary", 0.5)) if sections.get("summary") or preamble else _vc("", 0.0),
@@ -459,9 +617,10 @@ def parse_resume(source: str | Path, *, is_text: bool = False) -> dict:
         "education": _extract_education(sections.get("education", []), conf("education", 0.6)),
         "skills": skills,
         "projects": _extract_projects(sections.get("projects", []), conf("projects", 0.6)),
-        "certifications": _extract_list_items(sections.get("certifications", [])),
-        "languages": _extract_list_items(sections.get("languages", [])),
-        "achievements": _extract_list_items(sections.get("achievements", [])),
+        "certifications": cert_items,
+        "languages": lang_items,
+        "achievements": achv_items,
+        "interests": addl_info["interests"],
     }
 
     # If no explicit summary heading, use the longest preamble sentence as a soft summary.

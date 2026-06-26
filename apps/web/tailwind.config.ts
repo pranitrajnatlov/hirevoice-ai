@@ -1,20 +1,20 @@
 import type { Config } from "tailwindcss";
 
-// Dark Luxury theme — see docs/ARCHITECTURE.md "Design System".
+// Light theme with purple and pink accents
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        bg: "#071120",
-        surface: "rgba(255,255,255,0.04)",
-        border: "rgba(255,255,255,0.08)",
-        accent: { DEFAULT: "#6C63FF", soft: "rgba(108,99,255,0.15)" },
-        secondary: "#4CC9F0",
-        success: "#00C896",
-        warn: "#F5A524",
-        danger: "#FF5C7A",
-        ink: { DEFAULT: "#E8ECF4", muted: "#8A95A8" },
+        bg: "#F8F6FA",
+        surface: "#FFFFFF",
+        border: "#E2E0E7",
+        accent: { DEFAULT: "#6C48FF", soft: "rgba(108, 72, 255, 0.1)" },
+        secondary: "#D62BA0",
+        success: "#10b981",
+        warn: "#f5a524",
+        danger: "#ff8484",
+        ink: { DEFAULT: "#111827", muted: "#6B7280" },
       },
       fontFamily: {
         sans: ["Inter", "SF Pro Display", "system-ui", "sans-serif"],
@@ -22,8 +22,8 @@ const config: Config = {
       },
       borderRadius: { xl: "16px", "2xl": "20px" },
       boxShadow: {
-        glow: "0 0 40px rgba(108,99,255,0.25)",
-        card: "0 8px 40px rgba(0,0,0,0.35)",
+        glow: "0 0 20px rgba(108, 72, 255, 0.15)",
+        card: "0 4px 20px rgba(0, 0, 0, 0.05)",
       },
       backdropBlur: { xs: "2px" },
       keyframes: {

@@ -1,3 +1,5 @@
+import Cookies from "js-cookie";
+
 /**
  * Typed client for the HireVoice API gateway.
  * Base URL is proxied via next.config rewrites (/api/v1 → gateway) in dev.
@@ -7,12 +9,31 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 type Json = Record<string, unknown>;
 
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit & { token?: string }): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.token) headers.set("Authorization", `Bearer ${init.token}`);
   if (init?.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const res = await fetch(`${BASE}/api/v1${path}`, { ...init, headers });
-  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    // Expired/invalid recruiter session → log out and bounce to login (avoids the
+    // misleading "gateway is down" errors). Scoped to recruiter context (hv_token present)
+    // so a candidate's session-token 401 doesn't redirect them.
+    if (res.status === 401 && typeof window !== "undefined" && Cookies.get("hv_token")) {
+      Cookies.remove("hv_token", { path: "/" });
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login?expired=1";
+      }
+    }
+    throw new ApiError(res.status, body || res.statusText);
+  }
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 

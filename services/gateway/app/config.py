@@ -17,7 +17,9 @@ class Settings(BaseSettings):
 
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"
-    access_token_ttl_min: int = 15
+    # Dev-friendly default so sessions don't expire mid-demo. For production use a short
+    # access TTL (~15 min) with refresh-token rotation; override via HIREVOICE_ACCESS_TOKEN_TTL_MIN.
+    access_token_ttl_min: int = 720
     refresh_token_ttl_days: int = 30
 
     meeting_link_base: str = "http://localhost:3000/interview"

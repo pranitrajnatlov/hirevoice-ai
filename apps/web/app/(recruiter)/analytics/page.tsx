@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { api, type AnalyticsOverview } from "@/lib/api";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { TrendChart, SkillRadar } from "@/components/dashboard/Charts";
+import Cookies from "js-cookie";
 
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsOverview | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem("hv_token") ?? "";
+    const token = Cookies.get("hv_token") ?? "";
     api.overview(token).then(setData).catch(console.error);
   }, []);
 

@@ -3,8 +3,9 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import Cookies from "js-cookie";
 
 export default function NewInterviewPage() {
   const router = useRouter();
@@ -32,7 +33,7 @@ export default function NewInterviewPage() {
     setLoading(true);
     setErr("");
     try {
-      const token = localStorage.getItem("hv_token") ?? "";
+      const token = Cookies.get("hv_token") ?? "";
       const fd = new FormData();
       fd.append("role_title", form.role_title);
       fd.append("candidate_name", form.candidate_name);
@@ -43,8 +44,12 @@ export default function NewInterviewPage() {
       const result = await api.createInterview(fd, token);
       setMeetingUrl(result.meeting_url);
       setStep("done");
-    } catch {
-      setErr("Failed to create interview. Make sure the gateway is running.");
+    } catch (e) {
+      // 401s redirect to login via the API client; show the real reason otherwise.
+      const msg = e instanceof ApiError && e.status >= 500
+        ? "The server hit an error creating the interview. Check that the gateway and AI service are running."
+        : "Couldn't create the interview. Please try again.";
+      setErr(msg);
     } finally {
       setLoading(false);
     }

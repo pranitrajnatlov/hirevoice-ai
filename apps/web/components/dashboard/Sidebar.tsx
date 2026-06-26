@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, Users, Video, BarChart3, LogOut, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import Cookies from "js-cookie";
 
 const NAV = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
@@ -17,7 +18,7 @@ export function Sidebar() {
   const router = useRouter();
 
   const logout = () => {
-    localStorage.removeItem("hv_token");
+    Cookies.remove("hv_token", { path: "/" });
     router.replace("/login");
   };
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Search } from "lucide-react";
 import { api } from "@/lib/api";
+import Cookies from "js-cookie";
 
 type Row = {
   id: string;
@@ -72,7 +73,7 @@ export default function CandidatesPage() {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    const token = localStorage.getItem("hv_token") ?? "";
+    const token = Cookies.get("hv_token") ?? "";
     api
       .listInterviews(token)
       .then((data) => setRows(data as Row[]))

@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import Cookies from "js-cookie";
 
 type Interview = {
   id: string;
@@ -36,7 +37,7 @@ export default function InterviewsPage() {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    const token = localStorage.getItem("hv_token") ?? "";
+    const token = Cookies.get("hv_token") ?? "";
     api
       .listInterviews(token)
       .then((data) => setInterviews(data as Interview[]))

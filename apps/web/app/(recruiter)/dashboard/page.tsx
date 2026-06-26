@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { api, type AnalyticsOverview } from "@/lib/api";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { TrendChart, SkillRadar } from "@/components/dashboard/Charts";
+import Cookies from "js-cookie";
 
 const FUNNEL_KEYS = [
   { label: "Invited", key: "total_interviews" },
@@ -16,7 +17,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<AnalyticsOverview | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem("hv_token") ?? "";
+    const token = Cookies.get("hv_token") ?? "";
     api.overview(token).then(setData).catch(console.error);
   }, []);
 

@@ -76,7 +76,11 @@ async def _structured_context(db: AsyncSession, interview: Interview) -> str:
             ctx = build_interview_context(resume.parsed_profile)
             if ctx:
                 return ctx
-    return ""
+                
+    # Fallback: Provide basic candidate details to prevent AI name hallucination
+    candidate = await db.get(Candidate, interview.candidate_id)
+    name = candidate.full_name if candidate else "the candidate"
+    return f"Candidate Name: {name}\nRole Applied For: {interview.role_title}\n"
 
 
 def _vocabulary(interview: Interview) -> list[str]:

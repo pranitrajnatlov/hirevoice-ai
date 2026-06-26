@@ -10,6 +10,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { TranscriptViewer } from "@/components/interview/TranscriptViewer";
 import { AiContextView } from "@/components/interview/AiContextView";
 import { cn } from "@/lib/utils";
+import Cookies from "js-cookie";
 
 type Assessment = {
   overall_score: number;
@@ -88,7 +89,7 @@ export default function InterviewDetailPage() {
   const [contextError, setContextError] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("hv_token") ?? "";
+    const token = Cookies.get("hv_token") ?? "";
     api
       .getInterview(id, token)
       .then((d) => setInterview(d as unknown as Interview))
@@ -99,7 +100,7 @@ export default function InterviewDetailPage() {
   const openContextTab = () => {
     setTab("context");
     if (aiContext === null && !contextError) {
-      const token = localStorage.getItem("hv_token") ?? "";
+      const token = Cookies.get("hv_token") ?? "";
       api.getAiContext(id, token).then(setAiContext).catch(() => setContextError(true));
     }
   };
@@ -107,7 +108,7 @@ export default function InterviewDetailPage() {
   const openFullAnalysis = () => {
     setDrawerOpen(true);
     if (transcript === null) {
-      const token = localStorage.getItem("hv_token") ?? "";
+      const token = Cookies.get("hv_token") ?? "";
       api.getTranscript(id, token).then((d) => setTranscript(d.turns)).catch(() => setTranscript([]));
     }
   };

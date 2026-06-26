@@ -3,11 +3,12 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
+import Cookies from "js-cookie";
 
 export default function RecruiterLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   useEffect(() => {
-    if (!localStorage.getItem("hv_token")) router.replace("/login");
+    if (!Cookies.get("hv_token")) router.replace("/login");
   }, [router]);
   return (
     <div className="flex min-h-screen">

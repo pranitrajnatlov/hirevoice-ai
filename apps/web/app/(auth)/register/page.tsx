@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import Cookies from "js-cookie";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -25,7 +26,7 @@ export default function RegisterPage() {
       if (fullName.trim()) body.full_name = fullName.trim();
       if (orgName.trim()) body.org_name = orgName.trim();
       const { access_token } = await api.register(body);
-      localStorage.setItem("hv_token", access_token);
+      Cookies.set("hv_token", access_token, { expires: 7, path: "/" });
       router.push("/dashboard");
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
