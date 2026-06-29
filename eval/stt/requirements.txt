@@ -1,0 +1,3 @@
+# STT evaluation harness deps (install alongside the repo-root requirements.txt,
+# which provides faster-whisper / soundfile for the STT pipeline under test).
+jiwer>=3.0          # WER / CER metrics

@@ -125,3 +125,6 @@ pnpm-debug.log*
 
 # Claude Code / Gemini workspace files
 .claude/
+
+# STT eval generated output
+eval/stt/results.json
