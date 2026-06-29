@@ -87,6 +87,51 @@ The single biggest accuracy lever. Compare model sizes without code changes:
 .venv/bin/python eval/stt/run_eval.py --model base.en           # fastest
 ```
 
+Diff two runs side by side with `compare.py`:
+
+```bash
+.venv/bin/python eval/stt/run_eval.py --from-dir eval/stt/dataset/clips --accents english,hindi,arabic --per-accent 5 --model small.en        --out eval/stt/results_small.json
+.venv/bin/python eval/stt/run_eval.py --from-dir eval/stt/dataset/clips --accents english,hindi,arabic --per-accent 5 --model large-v3-turbo  --out eval/stt/results_turbo.json
+.venv/bin/python eval/stt/compare.py eval/stt/results_small.json eval/stt/results_turbo.json
+```
+
+## Baseline results
+
+Speech Accent Archive ("Please call Stella" passage), **55 clips** — 5 each across 11 native-language
+accents, `--seed 7`, baseline mode, CPU. Reproduce with:
+
+```bash
+ACC="english,hindi,bengali,punjabi,nepali,mandarin,arabic,spanish,french,korean,russian"
+.venv/bin/python eval/stt/run_eval.py --from-dir eval/stt/dataset/clips --accents "$ACC" --per-accent 5 --seed 7 --model small.en       --out eval/stt/results_small.json
+.venv/bin/python eval/stt/run_eval.py --from-dir eval/stt/dataset/clips --accents "$ACC" --per-accent 5 --seed 7 --model large-v3-turbo --out eval/stt/results_turbo.json
+.venv/bin/python eval/stt/compare.py eval/stt/results_small.json eval/stt/results_turbo.json
+```
+
+| Accent | small.en WER | large-v3-turbo WER | Δ (pts) |
+|---|---|---|---|
+| english (native) | 1.5% | 0.9% | +0.6 |
+| hindi | 3.8% | 0.9% | +2.9 |
+| bengali | 4.6% | 3.8% | +0.9 |
+| punjabi | 8.4% | 9.6% | **−1.2** |
+| nepali | 9.0% | 6.7% | +2.3 |
+| mandarin | 9.0% | 5.2% | +3.8 |
+| arabic | 5.5% | 3.5% | +2.0 |
+| spanish | 8.7% | 5.2% | +3.5 |
+| french | 4.1% | 1.2% | +2.9 |
+| korean | 5.2% | 2.0% | +3.2 |
+| russian | 2.3% | 1.5% | +0.9 |
+| **ALL** | **5.6%** | **3.7%** | **+2.0** |
+
+**Takeaways**
+- `large-v3-turbo` cuts overall WER ~34% (5.6% → 3.7%) and helps most on the hardest accents
+  (mandarin −3.8, spanish −3.5, korean −3.2). Recommended where GPU / latency headroom exists
+  (`HIREVOICE_STT_MODEL=large-v3-turbo`); `small.en` is a fine CPU-only default.
+- One regression — punjabi got slightly worse (−1.2 pts). Only 5 clips, so likely sample noise;
+  confirm with `--per-accent 15 --accents punjabi` before treating it as real.
+- This passage has **no technical vocabulary**, so it measures *raw* accent robustness. In the
+  live interview flow, vocabulary boosting + post-correction recover mistranscribed résumé terms
+  on top of these numbers.
+
 ## Output
 
 A WER table + CER table (per accent, with an `ALL` row), a one-line pipeline-gain summary,
