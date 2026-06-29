@@ -132,3 +132,6 @@ eval/stt/results.json
 # STT eval audio corpus (large) — keep only the smoke clip + reference
 eval/stt/dataset/clips/*
 !eval/stt/dataset/clips/smoke_001.wav
+
+# per-run eval outputs
+eval/stt/results_*.json
