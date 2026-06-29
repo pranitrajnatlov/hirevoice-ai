@@ -21,7 +21,35 @@ A synthetic smoke clip is included so it runs out of the box:
 .venv/bin/python eval/stt/run_eval.py --verbose
 ```
 
-## Add your own clips
+## Directory mode — many clips, one shared passage (Speech Accent Archive style)
+
+When every clip reads the **same** passage (and the accent is encoded in the filename, e.g.
+`hindi3.mp3`, `arabic12.mp3`), you don't need a manifest. Point the harness at the folder and a
+single reference file — accent is inferred from the filename prefix, and sampling keeps big
+corpora tractable:
+
+```bash
+# 4 clips per accent across a focused set (fast pilot)
+.venv/bin/python eval/stt/run_eval.py \
+  --from-dir eval/stt/dataset/clips \
+  --reference-file eval/stt/dataset/reading-passage.txt \
+  --accents english,hindi,bengali,punjabi,nepali,mandarin,arabic \
+  --per-accent 4
+
+# everything, capped per accent for a stable but bounded run
+.venv/bin/python eval/stt/run_eval.py --from-dir eval/stt/dataset/clips --per-accent 10
+```
+
+Flags: `--per-accent N` (sample N clips/accent), `--accents a,b,c` (filter), `--limit N`
+(global cap), `--seed` (sampling seed). With a generic passage there's no per-clip vocabulary,
+so the harness automatically runs **baseline only** (vocab/post modes would be identical).
+
+> The audio corpus itself is git-ignored (it's large); only the reference passage + harness are
+> tracked. Put your clips under `eval/stt/dataset/clips/`.
+
+## Add your own clips (manifest mode — mixed transcripts + vocabulary)
+
+Use this when clips say different things and you want to test vocabulary boosting:
 
 1. Drop audio (`.wav` or `.mp3`, ~5–15s each, aim for ~10 per accent) into `eval/stt/dataset/clips/`.
 2. Add one line per clip to `eval/stt/dataset/manifest.jsonl` (paths are relative to the dataset folder):

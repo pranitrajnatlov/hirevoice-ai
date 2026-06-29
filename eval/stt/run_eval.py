@@ -82,6 +82,46 @@ def transcribe_modes(audio_path: str, vocabulary: list[str], modes: list[str]) -
     return out
 
 
+_AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".webm")
+
+
+def accent_from_filename(stem: str) -> str:
+    """Derive an accent label from a filename like 'hindi3' -> 'hindi' (leading letters)."""
+    m = re.match(r"([a-zA-Z]+)", stem)
+    return m.group(1).lower() if m else "unknown"
+
+
+def build_rows_from_dir(clips_dir: Path, reference: str, *, per_accent: int | None,
+                        accents: list[str] | None, limit: int | None, seed: int) -> list[dict]:
+    """
+    Build eval rows from a directory of clips that all read the SAME reference passage
+    (e.g. the Speech Accent Archive). Accent is taken from the filename prefix. Supports
+    per-accent sampling, accent filtering, and a global cap so big corpora stay tractable.
+    """
+    import random
+
+    files = sorted(p for p in clips_dir.iterdir() if p.suffix.lower() in _AUDIO_EXTS)
+    by_accent: dict[str, list[Path]] = defaultdict(list)
+    for f in files:
+        by_accent[accent_from_filename(f.stem)].append(f)
+
+    if accents:
+        wanted = {a.lower() for a in accents}
+        by_accent = {a: fs for a, fs in by_accent.items() if a in wanted}
+
+    rng = random.Random(seed)
+    rows: list[dict] = []
+    for accent in sorted(by_accent.keys(), key=_accent_sort_key):
+        clips = by_accent[accent]
+        if per_accent and len(clips) > per_accent:
+            clips = rng.sample(clips, per_accent)
+        for c in sorted(clips):
+            rows.append({"audio": str(c.resolve()), "reference": reference, "accent": accent, "vocabulary": []})
+    if limit:
+        rows = rows[:limit]
+    return rows
+
+
 def _accent_sort_key(accent: str):
     a = accent.lower()
     return (_ACCENT_ORDER.index(a) if a in _ACCENT_ORDER else len(_ACCENT_ORDER), a)
@@ -110,8 +150,16 @@ def print_table(title: str, metric: str, per_accent: dict, modes: list[str]) -> 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Evaluate STT accuracy (WER/CER) per accent and pipeline mode.")
     ap.add_argument("--manifest", default=str(_REPO_ROOT / "eval/stt/dataset/manifest.jsonl"))
+    ap.add_argument("--from-dir", help="Directory of clips that all read the same passage "
+                                       "(accent inferred from filename). Bypasses --manifest.")
+    ap.add_argument("--reference-file", default=str(_REPO_ROOT / "eval/stt/dataset/reading-passage.txt"),
+                    help="Reference transcript file used by every clip in --from-dir.")
+    ap.add_argument("--per-accent", type=int, help="Cap clips sampled per accent (keeps big corpora fast).")
+    ap.add_argument("--accents", help="Comma-separated accent filter, e.g. english,hindi,bengali,arabic.")
+    ap.add_argument("--limit", type=int, help="Global cap on total clips after sampling.")
+    ap.add_argument("--seed", type=int, default=42, help="Sampling seed.")
     ap.add_argument("--model", help="Override HIREVOICE_STT_MODEL (e.g. small.en, base.en, large-v3-turbo).")
-    ap.add_argument("--modes", nargs="+", default=MODES, choices=MODES)
+    ap.add_argument("--modes", nargs="+", default=None, choices=MODES)
     ap.add_argument("--out", default=str(_REPO_ROOT / "eval/stt/results.json"))
     ap.add_argument("--verbose", action="store_true", help="Print per-clip WER.")
     args = ap.parse_args()
@@ -122,16 +170,37 @@ def main() -> None:
 
     import jiwer  # imported after arg parsing so --help is instant
 
-    manifest_path = Path(args.manifest).resolve()
-    if not manifest_path.exists():
-        sys.exit(f"Manifest not found: {manifest_path}")
-    base_dir = manifest_path.parent
-    rows = load_manifest(manifest_path)
+    if args.from_dir:
+        clips_dir = Path(args.from_dir).resolve()
+        if not clips_dir.is_dir():
+            sys.exit(f"--from-dir not found: {clips_dir}")
+        ref_path = Path(args.reference_file).resolve()
+        if not ref_path.exists():
+            sys.exit(f"--reference-file not found: {ref_path}")
+        reference = ref_path.read_text(encoding="utf-8").strip()
+        rows = build_rows_from_dir(
+            clips_dir, reference,
+            per_accent=args.per_accent,
+            accents=[a.strip() for a in args.accents.split(",")] if args.accents else None,
+            limit=args.limit, seed=args.seed,
+        )
+        base_dir = Path("/")  # rows carry absolute audio paths
+    else:
+        manifest_path = Path(args.manifest).resolve()
+        if not manifest_path.exists():
+            sys.exit(f"Manifest not found: {manifest_path}")
+        base_dir = manifest_path.parent
+        rows = load_manifest(manifest_path)
     if not rows:
-        sys.exit("Manifest is empty.")
+        sys.exit("No clips to evaluate.")
+
+    # No per-clip vocabulary (e.g. a generic reading passage) makes vocab/vocab+post identical
+    # to baseline — default to baseline-only unless the user explicitly chose modes.
+    has_vocab = any(r.get("vocabulary") for r in rows)
+    modes = args.modes or (MODES if has_vocab else ["baseline"])
 
     model_name = os.getenv("HIREVOICE_STT_MODEL", "small.en")
-    print(f"Evaluating {len(rows)} clip(s) · model={model_name} · modes={args.modes}")
+    print(f"Evaluating {len(rows)} clip(s) · model={model_name} · modes={modes}")
 
     wer_acc: dict = defaultdict(lambda: defaultdict(list))
     cer_acc: dict = defaultdict(lambda: defaultdict(list))
@@ -151,10 +220,10 @@ def main() -> None:
             print(f"  ! empty reference, skipping: {row['audio']}")
             continue
 
-        hyps = transcribe_modes(str(audio), row.get("vocabulary") or [], args.modes)
+        hyps = transcribe_modes(str(audio), row.get("vocabulary") or [], modes)
         clip = {"audio": row["audio"], "accent": accent, "reference": ref, "modes": {}}
         line_bits = []
-        for m in args.modes:
+        for m in modes:
             hyp_n = normalize(hyps.get(m, ""))
             wer = jiwer.wer(ref_n, hyp_n)
             cer = jiwer.cer(ref_n, hyp_n)
@@ -169,23 +238,23 @@ def main() -> None:
             print(f"  [{accent}] {row['audio']}: " + "  ".join(line_bits))
 
     # Add an "ALL" row aggregating across accents.
-    for m in args.modes:
+    for m in modes:
         wer_acc["ALL"][m] = wer_all[m]
         cer_acc["ALL"][m] = cer_all[m]
 
-    print_table("WER (Word Error Rate — lower is better)", "wer", wer_acc, args.modes)
-    print_table("CER (Character Error Rate — lower is better)", "cer", cer_acc, args.modes)
+    print_table("WER (Word Error Rate — lower is better)", "wer", wer_acc, modes)
+    print_table("CER (Character Error Rate — lower is better)", "cer", cer_acc, modes)
 
     summary = {
         "model": model_name,
-        "modes": args.modes,
+        "modes": modes,
         "clips": len(detail),
         "overall": {m: {"wer": round(mean(wer_all[m]), 4) if wer_all[m] else None,
-                        "cer": round(mean(cer_all[m]), 4) if cer_all[m] else None} for m in args.modes},
+                        "cer": round(mean(cer_all[m]), 4) if cer_all[m] else None} for m in modes},
         "per_accent": {
             acc: {m: {"wer": round(mean(wer_acc[acc][m]), 4) if wer_acc[acc][m] else None,
                       "cer": round(mean(cer_acc[acc][m]), 4) if cer_acc[acc][m] else None}
-                  for m in args.modes}
+                  for m in modes}
             for acc in wer_acc
         },
         "clips_detail": detail,
@@ -193,10 +262,10 @@ def main() -> None:
     Path(args.out).write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"\nWrote detailed results → {args.out}")
 
-    if len(args.modes) > 1 and wer_all.get(args.modes[0]) and wer_all.get(args.modes[-1]):
-        base, best = mean(wer_all[args.modes[0]]), mean(wer_all[args.modes[-1]])
+    if len(modes) > 1 and wer_all.get(modes[0]) and wer_all.get(modes[-1]):
+        base, best = mean(wer_all[modes[0]]), mean(wer_all[modes[-1]])
         delta = (base - best) * 100
-        print(f"Pipeline gain: {args.modes[0]} {base*100:.1f}% WER → {args.modes[-1]} {best*100:.1f}% WER "
+        print(f"Pipeline gain: {modes[0]} {base*100:.1f}% WER → {modes[-1]} {best*100:.1f}% WER "
               f"({delta:+.1f} pts)")
 
 

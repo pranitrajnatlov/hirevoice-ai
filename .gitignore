@@ -128,3 +128,7 @@ pnpm-debug.log*
 
 # STT eval generated output
 eval/stt/results.json
+
+# STT eval audio corpus (large) — keep only the smoke clip + reference
+eval/stt/dataset/clips/*
+!eval/stt/dataset/clips/smoke_001.wav
