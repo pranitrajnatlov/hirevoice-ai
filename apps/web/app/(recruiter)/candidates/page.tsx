@@ -131,6 +131,7 @@ export default function CandidatesPage() {
                 <th className="px-5 py-3">Latest role</th>
                 <th className="px-5 py-3">Best score</th>
                 <th className="px-5 py-3">Recommendation</th>
+                <th className="px-5 py-3"></th>
               </tr>
             </thead>
             <tbody className="text-ink">
@@ -140,7 +141,7 @@ export default function CandidatesPage() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: i * 0.03 }}
-                  onClick={() => router.push(`/interviews/${p.latestId}`)}
+                  onClick={() => router.push(`/interviews?candidate_id=${p.candidateId}`)}
                   className="cursor-pointer border-b border-border last:border-0 hover:bg-white/5"
                 >
                   <td className="px-5 py-3">
@@ -160,6 +161,26 @@ export default function CandidatesPage() {
                     ) : (
                       "—"
                     )}
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    <button
+                      className="rounded p-1.5 text-ink-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!window.confirm(`Delete ${p.name} and all of their interviews? This cannot be undone.`)) return;
+                        const token = Cookies.get("hv_token") ?? "";
+                        try {
+                          await api.deleteCandidate(p.candidateId, token);
+                          setRows((prev) => prev.filter((r) => r.candidate_id !== p.candidateId && r.candidate_name !== p.name));
+                        } catch (err) {
+                          console.error(err);
+                          alert("Failed to delete candidate.");
+                        }
+                      }}
+                      title="Delete Candidate"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                    </button>
                   </td>
                 </motion.tr>
               ))}

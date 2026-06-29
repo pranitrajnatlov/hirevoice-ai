@@ -41,7 +41,12 @@ export default function InterviewRoom() {
   const sttWs = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    api.getMeeting(token).then(setInfo).catch((e) => { setError(String(e)); setPhase("error"); });
+    api.getMeeting(token).then((data) => {
+      setInfo(data);
+      if (data.status === "completed" || data.status === "scored") {
+        setPhase("complete");
+      }
+    }).catch((e) => { setError(String(e)); setPhase("error"); });
     return () => { ws.current?.close(); sttWs.current?.close(); };
   }, [token]);
 
@@ -55,19 +60,28 @@ export default function InterviewRoom() {
   const playQuestionAudio = useCallback(async (text: string) => {
     setAvatar("speaking");
     try {
-      const resp = await fetch("/api/v1/tts/synthesize", {
+      const base = process.env.NEXT_PUBLIC_API_URL ?? "";
+      const resp = await fetch(`${base}/api/v1/tts/synthesize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      if (!resp.ok) throw new Error(`TTS ${resp.status}`);
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`TTS ${resp.status}: ${errText}`);
+      }
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.onended = () => { URL.revokeObjectURL(url); setAvatar("listening"); };
-      audio.onerror = () => { URL.revokeObjectURL(url); setAvatar("listening"); };
+      audio.onerror = (e) => { 
+        console.error("Audio playback error:", e);
+        URL.revokeObjectURL(url); 
+        setAvatar("listening"); 
+      };
       await audio.play();
-    } catch {
+    } catch (err) {
+      console.error("Failed to play AI question audio:", err);
       const ms = Math.min(7000, 1500 + text.length * 35);
       setTimeout(() => setAvatar("listening"), ms);
     }
@@ -86,6 +100,11 @@ export default function InterviewRoom() {
   }, [question.text, busy, recording, finishing, avatar, playQuestionAudio]);
 
   const join = async () => {
+    // Attempt to unlock audio context immediately on click
+    const unlockAudio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+    unlockAudio.play().catch(() => {});
+
+    setBusy(true);
     try {
       recorder.current = new AnswerRecorder();
       await recorder.current.init();
@@ -112,9 +131,11 @@ export default function InterviewRoom() {
         }
       };
       socket.onerror = () => { setWsConnected(false); console.warn("WS error — HTTP fallback"); };
+      setBusy(false);
     } catch (e) {
       setError(String(e));
       setPhase("error");
+      setBusy(false);
     }
   };
 
@@ -174,11 +195,21 @@ export default function InterviewRoom() {
     }
   };
 
-  const endEarly = () => {
+  const endEarly = async () => {
+    if (!window.confirm("Are you sure you want to end early? Your interview will be assessed based only on the progress made so far.")) return;
+    setBusy(true);
     recorder.current?.dispose();
     ws.current?.close();
     sttWs.current?.close();
+    try {
+      if (session) {
+        await api.endSession(session.interview_id, session.session_token);
+      }
+    } catch (e) {
+      console.error("Failed to cleanly end session", e);
+    }
     setPhase("complete");
+    setBusy(false);
   };
 
   // Spacebar = hold-to-talk (comfortable hands-free alternative to the button).
@@ -214,7 +245,8 @@ export default function InterviewRoom() {
       <Centered>
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="glass-card max-w-md p-8 text-center">
           <div className="mx-auto mb-5"><AiAvatar state="idle" /></div>
-          <h1 className="text-2xl font-bold text-ink">{info?.role_title ?? "Interview"}</h1>
+          <h1 className="text-2xl font-bold text-ink">Welcome, {info?.candidate_name}</h1>
+          <p className="mt-1 font-medium text-accent">{info?.role_title ?? "Interview"}</p>
           <p className="mt-1 text-ink-muted">AI voice interview · ~{info?.duration_min ?? 20} min</p>
           <p className="mx-auto mt-4 max-w-sm text-sm text-ink-muted">
             You'll speak with an AI interviewer. Allow microphone access, then hold the mic button to
@@ -249,6 +281,7 @@ export default function InterviewRoom() {
         total={session?.total_estimated ?? 10}
         wsConnected={wsConnected}
         roleTitle={info?.role_title}
+        candidateName={info?.candidate_name}
       />
 
       {/* Center stage */}
@@ -265,8 +298,8 @@ export default function InterviewRoom() {
       </div>
 
       {/* Bottom control dock */}
-      <div className="glass-card flex items-center justify-between gap-4 px-6 py-4">
-        <div className="flex items-center gap-1">
+      <div className="glass-card flex items-center justify-between px-6 py-4 relative">
+        <div className="flex flex-1 items-center gap-1">
           <button
             onClick={() => setTranscriptOpen(true)}
             className="flex items-center gap-2 rounded-full px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-white/5 hover:text-ink"
@@ -283,21 +316,25 @@ export default function InterviewRoom() {
           </button>
         </div>
 
-        <MicButton
-          recording={recording}
-          busy={busy}
-          finishing={finishing}
-          locked={avatar === "speaking" || avatar === "thinking"}
-          onPress={onPress}
-          onRelease={onRelease}
-        />
+        <div className="flex shrink-0 items-center justify-center">
+          <MicButton
+            recording={recording}
+            busy={busy}
+            finishing={finishing}
+            locked={avatar === "speaking" || avatar === "thinking"}
+            onPress={onPress}
+            onRelease={onRelease}
+          />
+        </div>
 
-        <button
-          onClick={endEarly}
-          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm text-danger transition-colors hover:bg-danger/10"
-        >
-          <PhoneOff className="h-4 w-4" /> <span className="hidden sm:inline">End</span>
-        </button>
+        <div className="flex flex-1 justify-end">
+          <button
+            onClick={endEarly}
+            className="flex items-center gap-2 rounded-full px-3 py-2 text-sm text-danger transition-colors hover:bg-danger/10"
+          >
+            <PhoneOff className="h-4 w-4" /> <span className="hidden sm:inline">End</span>
+          </button>
+        </div>
       </div>
 
       <TranscriptDrawer

@@ -29,6 +29,7 @@ export function StatusBar({
   total,
   wsConnected,
   roleTitle,
+  candidateName,
 }: {
   stage: string;
   avatar: AvatarState;
@@ -37,6 +38,7 @@ export function StatusBar({
   total: number;
   wsConnected: boolean;
   roleTitle?: string;
+  candidateName?: string;
 }) {
   const activeIdx = STAGES.findIndex((s) => s.key === stage);
   const ai = AI_STATUS[avatar];
@@ -46,7 +48,9 @@ export function StatusBar({
       {/* Left: role + AI status */}
       <div className="flex items-center gap-3">
         <div className="hidden sm:block">
-          <div className="text-sm font-semibold text-ink">{roleTitle ?? "Interview"}</div>
+          <div className="text-sm font-semibold text-ink">
+            {candidateName ? `${candidateName} · ${roleTitle ?? "Interview"}` : roleTitle ?? "Interview"}
+          </div>
           <div className="text-[11px] text-ink-muted">AI Interview · live</div>
         </div>
         <span className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-xs text-ink">

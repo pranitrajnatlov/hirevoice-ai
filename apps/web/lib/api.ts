@@ -42,6 +42,7 @@ export interface MeetingInfo {
   duration_min: number;
   status: string;
   valid: boolean;
+  candidate_name: string;
 }
 export interface SessionStart {
   session_token: string;
@@ -169,6 +170,7 @@ export const api = {
   // ── Candidate journey ──
   getMeeting: (token: string) => req<MeetingInfo>(`/meeting/${token}`),
   startSession: (token: string) => req<SessionStart>(`/sessions/${token}/start`, { method: "POST" }),
+  endSession: (interviewId: string, token: string) => req<Json>(`/sessions/${interviewId}/end`, { method: "POST", token }),
   submitAnswer: (interviewId: string, audio: Blob, token: string) => {
     const fd = new FormData();
     fd.append("audio", audio, "answer.webm");
@@ -178,9 +180,10 @@ export const api = {
   // ── Recruiter ──
   overview: (token: string) => req<AnalyticsOverview>("/analytics/overview", { token }),
   listInterviews: (token: string) => req<Json[]>("/interviews", { token }),
-  createInterview: (form: FormData, token: string) =>
-    req<CreateInterviewResponse>("/interviews", { method: "POST", body: form, token }),
+  createInterview: (form: FormData, token: string) => req<CreateInterviewResponse>("/interviews", { method: "POST", body: form, token }),
   getInterview: (id: string, token: string) => req<Json>(`/interviews/${id}`, { token }),
+  deleteInterview: (id: string, token: string) => req<void>(`/interviews/${id}`, { method: "DELETE", token }),
+  deleteCandidate: (id: string, token: string) => req<void>(`/candidates/${id}`, { method: "DELETE", token }),
   getTranscript: (id: string, token: string) => req<TranscriptResponse>(`/interviews/${id}/transcript`, { token }),
   getAiContext: (id: string, token: string) => req<AiContext>(`/interviews/${id}/ai-context`, { token }),
 };

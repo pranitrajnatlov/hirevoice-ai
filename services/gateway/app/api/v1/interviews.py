@@ -138,6 +138,26 @@ async def list_interviews(
     ]
 
 
+from sqlalchemy import delete
+
+@router.delete("/{interview_id}", status_code=204)
+async def delete_interview(
+    interview_id: str, claims: dict = Depends(require_recruiter), db: AsyncSession = Depends(get_db),
+) -> None:
+    recruiter = await _recruiter_for(db, claims["sub"])
+    iv = await db.get(Interview, interview_id)
+    if not iv or iv.recruiter_id != recruiter.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+
+    # Manually cascade delete related rows
+    await db.execute(delete(Response).where(Response.interview_id == iv.id))
+    await db.execute(delete(Question).where(Question.interview_id == iv.id))
+    await db.execute(delete(Assessment).where(Assessment.interview_id == iv.id))
+    await db.execute(delete(MeetingLink).where(MeetingLink.interview_id == iv.id))
+    await db.delete(iv)
+    await db.commit()
+
+
 @router.get("/{interview_id}")
 async def get_interview(
     interview_id: str, claims: dict = Depends(require_recruiter), db: AsyncSession = Depends(get_db),

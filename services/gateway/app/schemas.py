@@ -60,6 +60,7 @@ class MeetingInfo(BaseModel):
     duration_min: int
     status: str
     valid: bool
+    candidate_name: str
 
 
 # ── Sessions (candidate, token-scoped) ────────────────────────────────────────────

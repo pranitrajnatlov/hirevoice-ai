@@ -226,6 +226,33 @@ def generate_assessment(
     Retries up to max_retries times if the output fails to parse.
     Always returns an AssessmentResult (never raises).
     """
+    # Defensive check: if the transcript has basically no candidate responses, 
+    # the LLM will hallucinate an assessment. Short-circuit it.
+    candidate_lines = [line.split(":", 1)[1] for line in transcript.split("\n") if "Candidate:" in line]
+    candidate_words = sum(len(line.split()) for line in candidate_lines)
+    
+    if candidate_words < 15:
+        logger.warning("Transcript has only %d candidate words. Short-circuiting assessment to prevent hallucination.", candidate_words)
+        return AssessmentResult(
+            overall_score=0,
+            technical_score=0,
+            communication_score=0,
+            culture_fit_score=0,
+            problem_solving_score=0,
+            experience_relevance_score=0,
+            confidence_score=0,
+            resume_consistency_score=0,
+            recommendation="pending",
+            summary="The interview was ended prematurely or the candidate did not speak enough to be evaluated. There is insufficient data for an assessment.",
+            strengths=[],
+            weaknesses=[],
+            red_flags=["Interview ended prematurely", "Insufficient data for assessment"],
+            suggested_next_steps=[],
+            evidence={},
+            parse_error=False,
+            raw_output="Insufficient data."
+        )
+
     system = _load_system_prompt()
     user_content = _build_user_message(transcript, resume_context)
 

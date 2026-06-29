@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gateway.app.db import get_db
-from services.gateway.app.models import Interview, MeetingLink
+from services.gateway.app.models import Candidate, Interview, MeetingLink
 from services.gateway.app.schemas import MeetingInfo
 from services.gateway.app.timeutil import aware_utc, now_utc
 
@@ -27,9 +27,11 @@ async def resolve_link(db: AsyncSession, token: str) -> tuple[MeetingLink, Inter
 @router.get("/{token}", response_model=MeetingInfo)
 async def get_meeting(token: str, db: AsyncSession = Depends(get_db)) -> MeetingInfo:
     _link, interview = await resolve_link(db, token)
+    candidate = await db.get(Candidate, interview.candidate_id)
     return MeetingInfo(
         role_title=interview.role_title,
         duration_min=20,
         status=interview.status,
         valid=interview.status in ("invited", "in_progress"),
+        candidate_name=candidate.full_name if candidate else "Candidate",
     )

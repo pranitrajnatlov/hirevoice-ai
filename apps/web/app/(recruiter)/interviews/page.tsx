@@ -30,8 +30,13 @@ function fmtDate(iso: string): string {
   return isNaN(d.getTime()) ? "—" : d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
+import { useSearchParams } from "next/navigation";
+
 export default function InterviewsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetCandidateId = searchParams.get("candidate_id");
+
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -46,22 +51,36 @@ export default function InterviewsPage() {
   }, []);
 
   const filtered = useMemo(() => {
+    let list = interviews;
+    // @ts-ignore - candidate_id exists in the API response but isn't typed in the Interview type here
+    if (targetCandidateId) list = list.filter((iv) => iv.candidate_id === targetCandidateId);
+
     const q = query.trim().toLowerCase();
-    if (!q) return interviews;
-    return interviews.filter(
+    if (!q) return list;
+    return list.filter(
       (iv) =>
         iv.candidate_name.toLowerCase().includes(q) ||
         iv.role_title.toLowerCase().includes(q) ||
         iv.status.toLowerCase().includes(q),
     );
-  }, [interviews, query]);
+  }, [interviews, query, targetCandidateId]);
 
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-ink">Interviews</h1>
-          <p className="text-sm text-ink-muted">Every interview session, most recent first.</p>
+          <div className="flex items-center gap-2 text-sm text-ink-muted">
+            Every interview session, most recent first.
+            {targetCandidateId && (
+              <button 
+                onClick={() => router.push("/interviews")}
+                className="text-xs font-medium text-accent hover:underline ml-2"
+              >
+                Clear filter
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {interviews.length > 0 && (
@@ -101,6 +120,7 @@ export default function InterviewsPage() {
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3">Score</th>
                 <th className="px-5 py-3">Rec</th>
+                <th className="px-5 py-3"></th>
               </tr>
             </thead>
             <tbody className="text-ink">
@@ -130,6 +150,26 @@ export default function InterviewsPage() {
                     ) : (
                       "—"
                     )}
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    <button
+                      className="rounded p-1.5 text-ink-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!window.confirm(`Delete interview for ${iv.candidate_name}? This cannot be undone.`)) return;
+                        const token = Cookies.get("hv_token") ?? "";
+                        try {
+                          await api.deleteInterview(iv.id, token);
+                          setInterviews((prev) => prev.filter((r) => r.id !== iv.id));
+                        } catch (err) {
+                          console.error(err);
+                          alert("Failed to delete interview.");
+                        }
+                      }}
+                      title="Delete Interview"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                    </button>
                   </td>
                 </motion.tr>
               ))}

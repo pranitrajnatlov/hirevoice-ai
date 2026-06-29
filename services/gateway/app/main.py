@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from services.gateway.app.config import settings
 from services.gateway.app.db import init_db
-from services.gateway.app.api.v1 import analytics, auth, interviews, meeting, sessions, tts
+from services.gateway.app.api.v1 import analytics, auth, interviews, meeting, sessions, tts, candidates
 from services.gateway.app.ws.manager import manager as ws_manager
 
 
@@ -48,6 +48,7 @@ app.add_middleware(
 API = "/api/v1"
 app.include_router(auth.router, prefix=API)
 app.include_router(interviews.router, prefix=API)
+app.include_router(candidates.router, prefix=API)
 app.include_router(meeting.router, prefix=API)
 app.include_router(sessions.router, prefix=API)
 app.include_router(analytics.router, prefix=API)
