@@ -1,1 +1,0 @@
-{"audio": "clips/smoke_001.wav", "reference": "I built a Kafka based microservice using Spring Boot and deployed it on Kubernetes.", "accent": "synthetic", "vocabulary": ["Kafka", "Spring Boot", "Kubernetes", "microservice"]}
