@@ -186,4 +186,6 @@ export const api = {
   deleteCandidate: (id: string, token: string) => req<void>(`/candidates/${id}`, { method: "DELETE", token }),
   getTranscript: (id: string, token: string) => req<TranscriptResponse>(`/interviews/${id}/transcript`, { token }),
   getAiContext: (id: string, token: string) => req<AiContext>(`/interviews/${id}/ai-context`, { token }),
+  reassessInterview: (id: string, token: string) =>
+    req<{ status: string; failed: boolean }>(`/interviews/${id}/reassess`, { method: "POST", token }),
 };

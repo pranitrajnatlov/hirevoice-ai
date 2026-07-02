@@ -27,6 +27,9 @@ type Assessment = {
   summary: string;
   evidence?: Record<string, string[]>;
   unsupported_scores?: string[];
+  /** True when assessment generation itself failed (e.g. truncated LLM JSON) — the score
+   * fields are meaningless placeholders in this case, NOT a real "0/10" evaluation. */
+  failed?: boolean;
 };
 
 const EVIDENCE_LABELS: Record<string, string> = {
@@ -87,15 +90,35 @@ export default function InterviewDetailPage() {
   const [tab, setTab] = useState<"overview" | "context">("overview");
   const [aiContext, setAiContext] = useState<AiContext | null>(null);
   const [contextError, setContextError] = useState(false);
+  const [reassessing, setReassessing] = useState(false);
+  const [reassessError, setReassessError] = useState("");
+
+  const loadInterview = () => {
+    const token = Cookies.get("hv_token") ?? "";
+    return api.getInterview(id, token).then((d) => setInterview(d as unknown as Interview));
+  };
 
   useEffect(() => {
-    const token = Cookies.get("hv_token") ?? "";
-    api
-      .getInterview(id, token)
-      .then((d) => setInterview(d as unknown as Interview))
+    loadInterview()
       .catch(() => router.push("/interviews"))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, router]);
+
+  const retryAssessment = async () => {
+    setReassessing(true);
+    setReassessError("");
+    try {
+      const token = Cookies.get("hv_token") ?? "";
+      const res = await api.reassessInterview(id, token);
+      await loadInterview();
+      if (res.failed) setReassessError("The AI still couldn't produce a valid assessment. Try again in a moment.");
+    } catch {
+      setReassessError("Retry failed — check that the AI service is running.");
+    } finally {
+      setReassessing(false);
+    }
+  };
 
   const openContextTab = () => {
     setTab("context");
@@ -209,7 +232,7 @@ export default function InterviewDetailPage() {
           )}
 
           {/* Scores */}
-          {assessment && (
+          {assessment && !assessment.failed && (
             <div className="glass-card p-5">
               <h3 className="mb-4 text-sm font-semibold text-ink">Scores</h3>
               <div className="flex flex-col gap-3">
@@ -235,7 +258,20 @@ export default function InterviewDetailPage() {
         </div>
 
         {/* Right column — assessment (bounded; full content opens in the drawer, spec #5) */}
-        {assessment ? (
+        {assessment?.failed ? (
+          <div className="glass-card flex flex-col items-center justify-center gap-3 p-12 text-center">
+            <p className="text-ink">⚠ Assessment generation failed</p>
+            <p className="max-w-sm text-xs text-ink-muted">
+              The AI's response was cut off or malformed before it could be scored — this is a
+              generation error, not a real 0/10 evaluation. The interview transcript itself is
+              safe; you can retry generating the assessment from it.
+            </p>
+            {reassessError && <p className="text-xs text-danger">{reassessError}</p>}
+            <Button size="sm" onClick={retryAssessment} disabled={reassessing}>
+              {reassessing ? "Retrying…" : "Retry assessment"}
+            </Button>
+          </div>
+        ) : assessment ? (
           <div className="flex flex-col gap-5">
             <div className="glass-card p-5">
               <div className="mb-3 flex items-center justify-between gap-3">

@@ -50,12 +50,16 @@ async def create_interview(
 ) -> CreateInterviewResponse:
     recruiter = await _recruiter_for(db, claims["sub"])
 
-    # Candidate (upsert by email within org)
+    # Candidate (upsert by email within org). If a candidate with this email already exists
+    # (e.g. reused for a different req), refresh the name to what was just entered instead of
+    # silently keeping a stale name from a previous interview.
     candidate = await db.scalar(select(Candidate).where(Candidate.email == candidate_email))
     if not candidate:
         candidate = Candidate(full_name=candidate_name, email=candidate_email, org_id=recruiter.org_id)
         db.add(candidate)
         await db.flush()
+    elif candidate.full_name != candidate_name:
+        candidate.full_name = candidate_name
 
     # Resume analysis via AI service (best-effort: never block interview creation)
     resume_row = None
@@ -190,6 +194,9 @@ async def get_interview(
             "resume_consistency_score": full.get("resume_consistency_score"),
             "evidence": full.get("evidence", {}),
             "unsupported_scores": full.get("unsupported_scores", []),
+            # Distinguishes "the AI actually scored this 0" from "assessment generation failed"
+            # (e.g. the LLM's JSON got truncated) — the two must never look the same to a recruiter.
+            "failed": bool(full.get("parse_error", False)),
         }
 
     return {
@@ -201,6 +208,55 @@ async def get_interview(
         "resume_profile": (await _resume_profile(db, iv)),
         "assessment": assessment,
     }
+
+
+@router.post("/{interview_id}/reassess")
+async def reassess_interview(
+    interview_id: str, claims: dict = Depends(require_recruiter), db: AsyncSession = Depends(get_db),
+    ai: AIClient = Depends(get_ai_client),
+) -> dict:
+    """
+    Re-run AI assessment generation for an already-completed interview, without re-running
+    the interview itself. Recovers interviews stuck with a failed/truncated assessment
+    (all-zero scores, empty summary) — updates the existing Assessment row in place.
+    """
+    from services.gateway.app.api.v1.sessions import _history, _resume_context, _structured_context
+
+    iv = await db.get(Interview, interview_id)
+    if not iv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+    if iv.status != "completed":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Interview is not completed yet")
+
+    history = await _history(db, interview_id)
+    if not history:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No transcript available to assess")
+    transcript = "\n".join(
+        f"{'Interviewer' if m['role'] == 'assistant' else 'Candidate'}: {m['content']}"
+        for m in history
+    )
+    resume_ctx = await _structured_context(db, iv) or await _resume_context(db, iv)
+    a = await ai.assess(transcript, resume_ctx)
+
+    asmt = await db.scalar(select(Assessment).where(Assessment.interview_id == interview_id))
+    if not asmt:
+        asmt = Assessment(interview_id=interview_id)
+        db.add(asmt)
+    asmt.overall_score = a.get("overall_score")
+    asmt.technical_score = a.get("technical_score")
+    asmt.communication_score = a.get("communication_score")
+    asmt.culture_fit_score = a.get("culture_fit_score")
+    asmt.confidence_score = a.get("confidence_score")
+    asmt.resume_alignment = a.get("resume_consistency_score")
+    asmt.strengths = a.get("strengths", [])
+    asmt.weaknesses = a.get("weaknesses", [])
+    asmt.red_flags = a.get("red_flags", [])
+    asmt.recommendation = a.get("recommendation", "pending")
+    asmt.summary = a.get("summary", "")
+    asmt.raw_output = json.dumps(a)
+    await db.commit()
+
+    return {"status": "ok", "failed": bool(a.get("parse_error", False))}
 
 
 async def _resume_profile(db: AsyncSession, iv: Interview) -> dict | None:

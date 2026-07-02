@@ -26,7 +26,12 @@ export class AnswerRecorder {
   private buf: Uint8Array<ArrayBuffer> | null = null;
 
   async init(): Promise<MediaStream> {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Explicit echo cancellation / noise suppression / AGC — without these, the AI's own TTS
+    // question audio can bleed back into the mic (especially on laptop speakers, no headset)
+    // and gets transcribed as if it were the candidate's answer.
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
     return this.stream;
   }
 
@@ -92,7 +97,11 @@ export class AnswerRecorder {
    * prevents clipping answers when the user lifts the button a beat early.
    */
   stopGraceful(opts: GraceOptions = {}): Promise<Blob> {
-    const { maxGraceMs = 2000, silenceMs = 800, threshold = 0.02, onGraceStart } = opts;
+    // maxGraceMs is a hard cap on trailing speech AFTER the candidate releases the button —
+    // 2s was cutting people off mid-sentence when they kept talking past release (a very
+    // common push-to-talk habit). 8s gives real trailing thoughts room to finish naturally;
+    // silenceMs still ends it immediately once they actually stop talking.
+    const { maxGraceMs = 8000, silenceMs = 800, threshold = 0.02, onGraceStart } = opts;
     // No meter available → fall back to a short fixed grace then hard stop.
     if (!this.analyser) {
       onGraceStart?.();

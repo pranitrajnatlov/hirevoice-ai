@@ -262,9 +262,13 @@ def generate_assessment(
     ]
 
     last_raw = ""
+    # 1600 tokens gives the six-dimension evidence schema real room to close its JSON; the old
+    # 800-token budget routinely got cut off mid-object (missing final '}'), which always failed
+    # to parse and silently produced an all-zero/empty result indistinguishable from a real score.
+    max_tokens = 1600
     for attempt in range(max_retries + 1):
         try:
-            raw = llm.chat(messages, temperature=0.1, max_tokens=800)
+            raw = llm.chat(messages, temperature=0.1, max_tokens=max_tokens)
             last_raw = raw
             result = _parse_assessment(raw)
             if result.is_valid():
@@ -272,18 +276,31 @@ def generate_assessment(
                             attempt + 1, result.overall_score, result.recommendation)
                 return result
             if attempt < max_retries:
-                logger.warning("Assessment attempt %d invalid (score=%s) — retrying",
-                               attempt + 1, result.overall_score)
-                # Add a repair hint on retry
+                truncated = not raw.strip().endswith("}")
+                logger.warning("Assessment attempt %d invalid (score=%s, truncated=%s) — retrying",
+                               attempt + 1, result.overall_score, truncated)
+                # Add a repair hint on retry. If the output looks truncated (no closing brace),
+                # the fix is brevity, not correctness — ask for a shorter response, not a "corrected" one.
                 messages.append({"role": "assistant", "content": raw})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "The JSON was not valid. Fix it: ensure overall_score is an integer 1-10, "
-                        "recommendation is one of: strong_hire, hire, maybe, no_hire. "
-                        "Return ONLY the corrected JSON object."
-                    ),
-                })
+                if truncated:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your response was cut off before the JSON closed. Regenerate it MUCH "
+                            "more concisely: at most 1 evidence quote per dimension (under 12 words "
+                            "each), at most 2 items in strengths/weaknesses/red_flags, a one-sentence "
+                            "summary. Return ONLY the complete JSON object, ending with '}'."
+                        ),
+                    })
+                else:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "The JSON was not valid. Fix it: ensure overall_score is an integer 1-10, "
+                            "recommendation is one of: strong_hire, hire, maybe, no_hire. "
+                            "Return ONLY the corrected JSON object."
+                        ),
+                    })
         except Exception as exc:
             logger.error("Assessment LLM call failed (attempt %d): %s", attempt + 1, exc)
             last_raw = str(exc)
@@ -298,13 +315,16 @@ _SCHEMA_INSTRUCTION = (
     "  experience_relevance_score, confidence_score, resume_consistency_score  (integers 1-10),\n"
     "  culture_fit_score (integer 1-10),\n"
     "  recommendation (one of: strong_hire, hire, maybe, no_hire),\n"
-    "  summary (string), strengths/weaknesses/red_flags/suggested_next_steps (arrays of strings),\n"
+    "  summary (string, 1-2 sentences), strengths/weaknesses/red_flags/suggested_next_steps "
+    "(arrays of SHORT strings, max 3 items each),\n"
     "  evidence (object mapping each of: technical, communication, problem_solving,\n"
-    "    experience_relevance, confidence, resume_consistency -> an array of SHORT VERBATIM\n"
-    "    quotes from the transcript that justify that score).\n"
+    "    experience_relevance, confidence, resume_consistency -> an array of AT MOST 2 SHORT\n"
+    "    VERBATIM quotes, each under 15 words, from the transcript that justify that score).\n"
     "Rules: every score MUST be backed by at least one evidence quote — never invent a score "
     "without transcript evidence. 'resume_consistency' compares the candidate's spoken claims "
-    "against their resume. Quote the transcript exactly; do not paraphrase in evidence."
+    "against their resume. Quote the transcript exactly; do not paraphrase in evidence. "
+    "Keep the ENTIRE response compact — you must end with the closing '}' of the JSON object; "
+    "a truncated response is useless, so favor brevity over completeness in every field."
 )
 
 
