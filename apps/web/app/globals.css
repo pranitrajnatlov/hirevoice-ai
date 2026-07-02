@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #F8F6FA;
+  --accent: #6C48FF;
+  --secondary: #D62BA0;
+  --success: #10b981;
+}
+
+html, body {
+  background: var(--bg);
+  color: #111827;
+  min-height: 100vh;
+}
+
+@layer components {
+  /* Surface */
+  .glass {
+    @apply border border-border bg-surface;
+  }
+  .glass-card {
+    @apply glass rounded-2xl shadow-card;
+  }
+  .accent-gradient {
+    background: linear-gradient(to right, #6C48FF, #D62BA0);
+  }
+  .text-gradient {
+    background: linear-gradient(to right, #6C48FF, #D62BA0);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+/* Animated gradient score-bar fill */
+.score-fill {
+  background: linear-gradient(to right, #6C48FF, #D62BA0);
+  transition: width 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.1); border-radius: 99px; }
+
+/* Print-to-PDF for the AI Interview Context view: show only the printable region. */
+@media print {
+  body * { visibility: hidden; }
+  #ai-context-print, #ai-context-print * { visibility: visible; }
+  #ai-context-print { position: absolute; left: 0; top: 0; width: 100%; }
+  [data-print-hide] { display: none !important; }
+}

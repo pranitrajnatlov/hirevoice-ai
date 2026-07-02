@@ -1,19 +1,30 @@
+# ========================
 # Python
+# ========================
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
 *.egg-info/
-dist/
-build/
 *.egg
 .eggs/
+dist/
+build/
+*.whl
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Virtual env
+# Virtual environments
 .venv/
 venv/
 env/
+ENV/
 
+# ========================
 # Runtime data — generated at runtime, not source
+# ========================
 data/audio/*
 data/sessions/*
 data/piper_models/*
@@ -23,25 +34,104 @@ data/piper_models/*
 !data/sessions/.gitkeep
 !data/piper_models/.gitkeep
 
-# Test / coverage
+# SQLite databases
+*.db
+*.sqlite3
+
+# ========================
+# Node.js / Next.js (apps/web)
+# ========================
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.turbo/
+.vercel/
+.eslintcache
+
+# ========================
+# Test / Coverage
+# ========================
 .pytest_cache/
 .coverage
+coverage/
 htmlcov/
+*.cover
+.hypothesis/
+.nox/
+.tox/
+nosetests.xml
+coverage.xml
+junit.xml
 
-# OS
+# ========================
+# OS files
+# ========================
 .DS_Store
 Thumbs.db
+Desktop.ini
+ehthumbs.db
+._*
 
-# IDE / editor
+# ========================
+# IDE / Editor
+# ========================
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
 
+# ========================
 # Secrets — never commit
+# ========================
 .env
 .env.*
+!.env.example
 *.key
+*.pem
 
-# Claude Code workspace files
+# ========================
+# Logs
+# ========================
+*.log
+.gateway.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ========================
+# AI / ML models (large binaries)
+# ========================
+*.onnx
+*.bin
+*.pt
+*.pth
+*.gguf
+*.ggml
+
+# ========================
+# Misc
+# ========================
+*.bak
+*.tmp
+*.temp
+
+# Claude Code / Gemini workspace files
 .claude/
+
+# STT eval generated output
+eval/stt/results.json
+
+# STT eval audio corpus (large) — keep only the smoke clip + reference
+eval/stt/dataset/clips/*
+!eval/stt/dataset/clips/smoke_001.wav
+
+# per-run eval outputs
+eval/stt/results_*.json

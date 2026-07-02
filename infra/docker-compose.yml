@@ -1,0 +1,79 @@
+# HireVoice AI — local development stack.
+# Brings up the AI service, (placeholder) gateway, Postgres, Redis, and MinIO (S3-compatible).
+# The Next.js web app runs separately via `pnpm dev` in apps/web during development.
+#
+#   docker compose -f infra/docker-compose.yml up
+#
+# Note: the `ai` service mounts the repo so it imports the existing app/ core directly.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hirevoice
+      POSTGRES_PASSWORD: hirevoice
+      POSTGRES_DB: hirevoice
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hirevoice"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:                      # S3-compatible object storage for local dev
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: hirevoice
+      MINIO_ROOT_PASSWORD: hirevoice123
+    ports: ["9000:9000", "9001:9001"]
+    volumes:
+      - miniodata:/data
+
+  ai:                         # FastAPI wrapper around existing app/ AI core
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.ai
+    command: uvicorn services.ai.app.main:app --host 0.0.0.0 --port 8800
+    environment:
+      HIREVOICE_MODE: ${HIREVOICE_MODE:-local}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_HOST: http://host.docker.internal:11434
+    ports: ["8800:8800"]
+    volumes:
+      - ..:/workspace          # mount repo so app/ is importable; models cached on host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  gateway:                    # FastAPI API gateway (scaffold — implemented in Phase 2)
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.gateway
+    command: uvicorn services.gateway.app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+asyncpg://hirevoice:hirevoice@postgres:5432/hirevoice
+      REDIS_URL: redis://redis:6379/0
+      AI_SERVICE_URL: http://ai:8800
+      S3_ENDPOINT: http://minio:9000
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      ai: { condition: service_started }
+
+volumes:
+  pgdata:
+  miniodata:
